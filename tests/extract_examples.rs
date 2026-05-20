@@ -5,7 +5,7 @@
 /// named symbols are found with correct kinds and non-empty doc content.
 use std::path::Path;
 
-use freight_doc::extract::{extract_dir, extract_file, DocKind};
+use doccy::extract::{extract_dir, extract_file, DocKind};
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -17,14 +17,14 @@ fn doc_example(rel: &str) -> std::path::PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/doc-example").join(rel)
 }
 
-fn has_item(items: &[freight_doc::extract::DocItem], name: &str) -> bool {
+fn has_item(items: &[doccy::extract::DocItem], name: &str) -> bool {
     items.iter().any(|i| i.name == name)
 }
 
 fn find_item<'a>(
-    items: &'a [freight_doc::extract::DocItem],
+    items: &'a [doccy::extract::DocItem],
     name: &str,
-) -> &'a freight_doc::extract::DocItem {
+) -> &'a doccy::extract::DocItem {
     items.iter().find(|i| i.name == name)
         .unwrap_or_else(|| panic!("item '{name}' not found; got: {:?}",
             items.iter().map(|i| &i.name).collect::<Vec<_>>()))
@@ -56,7 +56,7 @@ fn c_buffer_finds_all_functions() {
 fn c_buffer_push_has_params() {
     let items = extract_file(&fixture("c/buffer.h"));
     let push = find_item(&items, "buffer_push");
-    use freight_doc::extract::TagKind;
+    use doccy::extract::TagKind;
     let params: Vec<_> = push.tags.iter().filter(|t| t.kind == TagKind::Param).collect();
     assert!(params.len() >= 3, "buffer_push should have ≥3 @param tags");
 }
@@ -165,7 +165,7 @@ fn rust_char_count_has_example_in_body() {
     let item = find_item(&items, "char_count");
     // The ```…``` block lands in the body.
     assert!(item.body.contains("assert_eq") || item.tags.iter().any(|t| {
-        use freight_doc::extract::TagKind;
+        use doccy::extract::TagKind;
         t.kind == TagKind::Example && t.text.contains("assert_eq")
     }), "char_count should capture the example block");
 }
@@ -239,7 +239,7 @@ fn doc_example_stats_finds_class() {
 fn doc_example_stats_mean_has_param_and_return() {
     let set = extract_dir(&doc_example("libs/stats/src"));
     let mean = find_item(&set.items, "stats::mean");
-    use freight_doc::extract::TagKind;
+    use doccy::extract::TagKind;
     assert!(mean.tags.iter().any(|t| t.kind == TagKind::Param), "mean needs @param");
     assert!(mean.tags.iter().any(|t| t.kind == TagKind::Return), "mean needs @return");
 }
@@ -291,7 +291,7 @@ fn doc_example_linalg_finds_procedures() {
 #[cfg(feature = "clang")]
 mod clang_tests {
     use super::*;
-    use freight_doc::extract_clang::extract_file_clang;
+    use doccy::extract_clang::extract_file_clang;
 
     #[test]
     fn clang_c_buffer_finds_functions() {

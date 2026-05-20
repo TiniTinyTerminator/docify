@@ -1,7 +1,4 @@
-/// Documentation extraction and rendering.
-///
-/// Supports C/C++ (Doxygen `/** */`, `/*! */`, `///`), Rust (`///`, `/** */`),
-/// Fortran (`!>` / `!!`), D (`/++`, `/**`, `///`) and Ada (`--!` / `---`).
+pub mod agent;
 pub mod extract;
 pub mod markdown;
 pub mod render_md;

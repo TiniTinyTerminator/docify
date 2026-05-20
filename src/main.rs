@@ -1,38 +1,115 @@
 use std::path::PathBuf;
 
-use clap::Parser;
-use freight_doc::extract::{extract_dir, DocSet};
-use freight_doc::render;
+use clap::{Parser, Subcommand};
 
-/// Extract doc comments from source files and render documentation.
+use doccy::agent::{
+    all_symbols, extract_source, find_symbol, search_symbols, ContextJson, OutlineItem, SymbolJson,
+};
+use doccy::extract::{extract_dir, DocSet};
+use doccy::render;
+
+/// Multi-language doc comment extractor.
 #[derive(Parser)]
-#[command(
-    name = "freight-doc",
-    about = "Multi-language doc comment extractor — outputs Markdown",
-)]
+#[command(name = "doccy", version)]
 struct Cli {
-    /// Source directories to scan (default: current directory)
-    #[arg(value_name = "DIR")]
-    dirs: Vec<PathBuf>,
+    #[command(subcommand)]
+    command: Option<Cmd>,
+}
 
-    /// Output directory for the generated documentation
-    #[arg(short, long, value_name = "DIR", default_value = "target/doc")]
-    out: PathBuf,
+#[derive(Subcommand)]
+enum Cmd {
+    /// Generate Markdown documentation (default when no command given)
+    Gen {
+        /// Source directories to scan (default: current directory)
+        #[arg(value_name = "DIR")]
+        dirs: Vec<PathBuf>,
 
-    /// List extracted items without writing any files
-    #[arg(long)]
-    dry_run: bool,
+        /// Output directory for generated docs
+        #[arg(short, long, value_name = "DIR", default_value = "target/doc")]
+        out: PathBuf,
+
+        /// List extracted items without writing files
+        #[arg(long)]
+        dry_run: bool,
+    },
+
+    /// Get full documentation for a single symbol (JSON)
+    Get {
+        /// Symbol name — exact, qualified, or unqualified suffix (e.g. "mean", "stats::mean")
+        name: String,
+
+        /// Source directories to scan (default: current directory)
+        #[arg(value_name = "DIR")]
+        dirs: Vec<PathBuf>,
+    },
+
+    /// Print the source code of a symbol
+    Source {
+        /// Symbol name
+        name: String,
+
+        /// Source directories to scan (default: current directory)
+        #[arg(value_name = "DIR")]
+        dirs: Vec<PathBuf>,
+
+        /// Maximum number of lines to extract
+        #[arg(long, default_value_t = 120)]
+        max_lines: usize,
+    },
+
+    /// Get documentation + source code for a symbol in one response (JSON)
+    Context {
+        /// Symbol name
+        name: String,
+
+        /// Source directories to scan (default: current directory)
+        #[arg(value_name = "DIR")]
+        dirs: Vec<PathBuf>,
+
+        /// Maximum lines of source to include
+        #[arg(long, default_value_t = 120)]
+        max_lines: usize,
+    },
+
+    /// Search symbols by name or description (JSON array)
+    Search {
+        /// Search query (case-insensitive substring)
+        query: String,
+
+        /// Source directories to scan (default: current directory)
+        #[arg(value_name = "DIR")]
+        dirs: Vec<PathBuf>,
+    },
+
+    /// List all documented symbols as a compact JSON outline
+    Outline {
+        /// Source directories to scan (default: current directory)
+        #[arg(value_name = "DIR")]
+        dirs: Vec<PathBuf>,
+    },
 }
 
 fn main() {
     let cli = Cli::parse();
 
-    let scan_dirs: Vec<PathBuf> = if cli.dirs.is_empty() {
-        vec![std::env::current_dir().expect("cannot read cwd")]
-    } else {
-        cli.dirs
-    };
+    match cli.command.unwrap_or_else(|| Cmd::Gen {
+        dirs: vec![],
+        out: PathBuf::from("target/doc"),
+        dry_run: false,
+    }) {
+        Cmd::Gen { dirs, out, dry_run }          => cmd_gen(dirs, out, dry_run),
+        Cmd::Get { name, dirs }                  => cmd_get(&name, dirs),
+        Cmd::Source { name, dirs, max_lines }    => cmd_source(&name, dirs, max_lines),
+        Cmd::Context { name, dirs, max_lines }   => cmd_context(&name, dirs, max_lines),
+        Cmd::Search { query, dirs }              => cmd_search(&query, dirs),
+        Cmd::Outline { dirs }                    => cmd_outline(dirs),
+    }
+}
 
+// ── gen ───────────────────────────────────────────────────────────────────────
+
+fn cmd_gen(raw_dirs: Vec<PathBuf>, out: PathBuf, dry_run: bool) {
+    let scan_dirs = resolve_dirs(raw_dirs);
     let mut all_items = Vec::new();
     let source_root = scan_dirs[0].clone();
 
@@ -53,7 +130,7 @@ fn main() {
 
     let total = all_items.len();
 
-    if cli.dry_run {
+    if dry_run {
         println!("{total} documented items found:");
         for item in &all_items {
             let rel = item.file
@@ -74,9 +151,113 @@ fn main() {
 
     let set = DocSet { items: all_items, source_root };
 
-    if let Err(e) = render(&set, &cli.out) {
+    if let Err(e) = render(&set, &out) {
         eprintln!("error: {e}");
         std::process::exit(1);
     }
-    println!("✓ {total} items [md] → {}", cli.out.join("index.md").display());
+    println!("✓ {total} items → {}", out.join("index.md").display());
+}
+
+// ── get ───────────────────────────────────────────────────────────────────────
+
+fn cmd_get(name: &str, raw_dirs: Vec<PathBuf>) {
+    let dirs = resolve_dirs(raw_dirs);
+    let dir_refs: Vec<&std::path::Path> = dirs.iter().map(|p| p.as_path()).collect();
+
+    match find_symbol(name, &dir_refs) {
+        Some(item) => {
+            let json: SymbolJson = item.into();
+            println!("{}", serde_json::to_string_pretty(&json).unwrap());
+        }
+        None => {
+            eprintln!("error: symbol '{name}' not found");
+            std::process::exit(1);
+        }
+    }
+}
+
+// ── source ────────────────────────────────────────────────────────────────────
+
+fn cmd_source(name: &str, raw_dirs: Vec<PathBuf>, max_lines: usize) {
+    let dirs = resolve_dirs(raw_dirs);
+    let dir_refs: Vec<&std::path::Path> = dirs.iter().map(|p| p.as_path()).collect();
+
+    match find_symbol(name, &dir_refs) {
+        Some(item) => {
+            let src = extract_source(&item, max_lines);
+            if src.is_empty() {
+                eprintln!("error: could not read source for '{name}'");
+                std::process::exit(1);
+            }
+            println!("{src}");
+        }
+        None => {
+            eprintln!("error: symbol '{name}' not found");
+            std::process::exit(1);
+        }
+    }
+}
+
+// ── context ───────────────────────────────────────────────────────────────────
+
+fn cmd_context(name: &str, raw_dirs: Vec<PathBuf>, max_lines: usize) {
+    let dirs = resolve_dirs(raw_dirs);
+    let dir_refs: Vec<&std::path::Path> = dirs.iter().map(|p| p.as_path()).collect();
+
+    match find_symbol(name, &dir_refs) {
+        Some(item) => {
+            let source = extract_source(&item, max_lines);
+            let ctx = ContextJson {
+                source,
+                doc: item.into(),
+            };
+            println!("{}", serde_json::to_string_pretty(&ctx).unwrap());
+        }
+        None => {
+            eprintln!("error: symbol '{name}' not found");
+            std::process::exit(1);
+        }
+    }
+}
+
+// ── search ────────────────────────────────────────────────────────────────────
+
+fn cmd_search(query: &str, raw_dirs: Vec<PathBuf>) {
+    let dirs = resolve_dirs(raw_dirs);
+    let dir_refs: Vec<&std::path::Path> = dirs.iter().map(|p| p.as_path()).collect();
+
+    let results: Vec<OutlineItem> = search_symbols(query, &dir_refs)
+        .iter()
+        .map(OutlineItem::from)
+        .collect();
+
+    if results.is_empty() {
+        eprintln!("no matches for '{query}'");
+        std::process::exit(1);
+    }
+    println!("{}", serde_json::to_string_pretty(&results).unwrap());
+}
+
+// ── outline ───────────────────────────────────────────────────────────────────
+
+fn cmd_outline(raw_dirs: Vec<PathBuf>) {
+    let dirs = resolve_dirs(raw_dirs);
+    let dir_refs: Vec<&std::path::Path> = dirs.iter().map(|p| p.as_path()).collect();
+
+    let outline: Vec<OutlineItem> = all_symbols(&dir_refs)
+        .iter()
+        .map(OutlineItem::from)
+        .collect();
+
+    println!("{}", serde_json::to_string_pretty(&outline).unwrap());
+}
+
+// ── helpers ───────────────────────────────────────────────────────────────────
+
+fn resolve_dirs(dirs: Vec<PathBuf>) -> Vec<PathBuf> {
+    if dirs.is_empty() {
+        vec![std::env::current_dir().expect("cannot read cwd")]
+    } else {
+        dirs
+    }
 }

@@ -183,21 +183,12 @@ fn find_brace_end(lines: &[&str], start: usize, max: usize) -> usize {
                 '"' => { while let Some(c) = chars.next() { if c == '"' { break; } } }
                 '{' => { depth += 1; seen_open = true; }
                 '}' => { depth -= 1; }
+                // A semicolon before any opening brace ends a forward declaration.
+                ';' if !seen_open => { return i; }
                 _ => {}
             }
         }
         if seen_open && depth <= 0 { return i; }
-    }
-    // No opening brace — forward declaration; return the first code line after the comment.
-    if !seen_open {
-        for i in start..=bound {
-            let t = lines[i].trim();
-            if !t.is_empty() && !t.starts_with("//") && !t.starts_with('*')
-                && !t.starts_with("/**") && !t.starts_with("/*!") && !t.starts_with("///")
-            {
-                return i;
-            }
-        }
     }
     bound
 }

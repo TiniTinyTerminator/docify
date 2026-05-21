@@ -165,29 +165,31 @@ fn find_brace_end(lines: &[&str], start: usize, max: usize) -> usize {
     let bound = (start + max).min(lines.len().saturating_sub(1));
     let mut depth: i32 = 0;
     let mut seen_open = false;
+    let mut in_block_comment = false;
 
     for i in start..=bound {
-        let line = lines[i];
-        let mut in_str = false;
-        let mut chars = line.chars().peekable();
+        let mut chars = lines[i].chars().peekable();
         while let Some(ch) = chars.next() {
+            if in_block_comment {
+                if ch == '*' && chars.peek() == Some(&'/') { chars.next(); in_block_comment = false; }
+                continue;
+            }
             match ch {
-                '"' | '\'' => in_str = !in_str,
-                '{' if !in_str => { depth += 1; seen_open = true; }
-                '}' if !in_str => { depth -= 1; }
-                '/' if !in_str => {
-                    if chars.peek() == Some(&'/') { break; } // line comment
-                }
+                '/' => match chars.peek() {
+                    Some(&'/') => break,                                       // line comment
+                    Some(&'*') => { chars.next(); in_block_comment = true; }  // block comment
+                    _ => {}
+                },
+                '"' => { while let Some(c) = chars.next() { if c == '"' { break; } } }
+                '{' => { depth += 1; seen_open = true; }
+                '}' => { depth -= 1; }
                 _ => {}
             }
         }
-        if seen_open && depth <= 0 {
-            return i;
-        }
+        if seen_open && depth <= 0 { return i; }
     }
-    // No opening brace — likely a forward declaration; return just the signature line
+    // No opening brace — forward declaration; return the first code line after the comment.
     if !seen_open {
-        // Find the declaration line (first non-comment line after start)
         for i in start..=bound {
             let t = lines[i].trim();
             if !t.is_empty() && !t.starts_with("//") && !t.starts_with('*')

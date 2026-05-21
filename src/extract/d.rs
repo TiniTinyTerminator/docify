@@ -8,6 +8,15 @@ pub(super) fn extract_d(src: &str, file: &Path) -> Vec<DocItem> {
     let mut items = Vec::new();
     let mut i = 0;
 
+    // Pre-scan for the module declaration so we can qualify all names.
+    let mod_name: String = lines.iter()
+        .find_map(|l| {
+            let rest = l.trim().strip_prefix("module ")?;
+            let name = first_ident(rest);
+            if !name.is_empty() { Some(name) } else { None }
+        })
+        .unwrap_or_default();
+
     while i < lines.len() {
         let t = lines[i].trim();
 
@@ -15,7 +24,8 @@ pub(super) fn extract_d(src: &str, file: &Path) -> Vec<DocItem> {
             let (block, end) = collect_d_block(&lines, i);
             let sym = next_non_blank(&lines, end + 1);
             let (name, kind) = detect_d_symbol(sym);
-            let item = build_item(block, name, kind, file, i + 1, DocLanguage::D, sym.to_string());
+            let qualified = qualify_mod(&mod_name, name, &kind);
+            let item = build_item(block, qualified, kind, file, i + 1, DocLanguage::D, sym.to_string());
             if item_has_content(&item) { items.push(item); }
             i = end + 1;
             continue;
@@ -25,7 +35,8 @@ pub(super) fn extract_d(src: &str, file: &Path) -> Vec<DocItem> {
             let (block, end) = collect_c_block(&lines, i);
             let sym = next_non_blank(&lines, end + 1);
             let (name, kind) = detect_d_symbol(sym);
-            let item = build_item(block, name, kind, file, i + 1, DocLanguage::D, sym.to_string());
+            let qualified = qualify_mod(&mod_name, name, &kind);
+            let item = build_item(block, qualified, kind, file, i + 1, DocLanguage::D, sym.to_string());
             if item_has_content(&item) { items.push(item); }
             i = end + 1;
             continue;
@@ -35,7 +46,8 @@ pub(super) fn extract_d(src: &str, file: &Path) -> Vec<DocItem> {
             let (block, end) = collect_line_block(&lines, i, "///");
             let sym = next_non_blank(&lines, end + 1);
             let (name, kind) = detect_d_symbol(sym);
-            let item = build_item(block, name, kind, file, i + 1, DocLanguage::D, sym.to_string());
+            let qualified = qualify_mod(&mod_name, name, &kind);
+            let item = build_item(block, qualified, kind, file, i + 1, DocLanguage::D, sym.to_string());
             if item_has_content(&item) { items.push(item); }
             i = end + 1;
             continue;
@@ -44,6 +56,14 @@ pub(super) fn extract_d(src: &str, file: &Path) -> Vec<DocItem> {
         i += 1;
     }
     items
+}
+
+fn qualify_mod(mod_name: &str, name: String, kind: &super::DocKind) -> String {
+    if mod_name.is_empty() || *kind == super::DocKind::Module || name.is_empty() {
+        name
+    } else {
+        format!("{mod_name}.{name}")
+    }
 }
 
 fn collect_d_block(lines: &[&str], start: usize) -> (Vec<String>, usize) {

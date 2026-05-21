@@ -109,6 +109,9 @@ pub struct DocMeta {
     /// Semantic attributes: `"const"`, `"virtual"`, `"override"`, `"noexcept"`,
     /// `"pure"`, `"constructor"`, `"destructor"`, `"operator"`.
     pub attrs: Vec<String>,
+    /// Doxygen group name set by `@defgroup`/`@addtogroup`/`@{`/`@}` fences
+    /// or an explicit `@ingroup groupname` tag.
+    pub group: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -383,6 +386,161 @@ void sort(int *arr, size_t len);"#;
         let got = items(src, &DocLanguage::Rust);
         assert_eq!(got[0].name, "Rgb");
         assert!(matches!(got[0].kind, DocKind::Struct));
+    }
+
+    // ── Rust: Markdown section headings ──────────────────────────────────────
+
+    fn rust_item(src: &str) -> DocItem {
+        let got = items(src, &DocLanguage::Rust);
+        assert!(!got.is_empty(), "expected item from Rust src");
+        got.into_iter().next().unwrap()
+    }
+
+    #[test]
+    fn rust_examples_section_becomes_example_tag() {
+        let src = "/// Brief.\n///\n/// # Examples\n/// ```\n/// let x = 1;\n/// ```\npub fn f() {}";
+        let item = rust_item(src);
+        assert!(tag_of(&item, &TagKind::Example).is_some(),
+            "# Examples should become TagKind::Example");
+        assert!(tag_of(&item, &TagKind::Example).unwrap().text.contains("let x"),
+            "code block should be in tag text");
+    }
+
+    #[test]
+    fn rust_panics_section_captured() {
+        let src = "/// Brief.\n///\n/// # Panics\n/// If n is zero.\npub fn f(n: u32) {}";
+        let item = rust_item(src);
+        let t = other_tag(&item, "panics");
+        assert!(t.is_some(), "# Panics should become Other(\"panics\")");
+        assert!(t.unwrap().text.contains("zero"));
+    }
+
+    #[test]
+    fn rust_errors_section_captured() {
+        let src = "/// Brief.\n///\n/// # Errors\n/// Returns `Err` on I/O failure.\npub fn f() -> Result<(), std::io::Error> { todo!() }";
+        let item = rust_item(src);
+        let t = other_tag(&item, "errors");
+        assert!(t.is_some(), "# Errors should become Other(\"errors\")");
+        assert!(t.unwrap().text.contains("I/O"));
+    }
+
+    #[test]
+    fn rust_safety_section_captured() {
+        let src = "/// Brief.\n///\n/// # Safety\n/// Caller must ensure ptr is valid.\n/// # Panics\n/// Never.\npub unsafe fn f(ptr: *const u8) {}";
+        let item = rust_item(src);
+        let s = other_tag(&item, "safety");
+        assert!(s.is_some(), "# Safety should become Other(\"safety\")");
+        assert!(s.unwrap().text.contains("ptr"));
+        assert!(other_tag(&item, "panics").is_some());
+    }
+
+    #[test]
+    fn rust_returns_section_becomes_return_tag() {
+        let src = "/// Brief.\n///\n/// # Returns\n/// The computed value.\npub fn f() -> u32 { 0 }";
+        let item = rust_item(src);
+        assert!(tag_of(&item, &TagKind::Return).is_some(),
+            "# Returns should become TagKind::Return");
+        assert_eq!(tag_of(&item, &TagKind::Return).unwrap().text, "The computed value.");
+    }
+
+    #[test]
+    fn rust_notes_section_becomes_note_tag() {
+        let src = "/// Brief.\n///\n/// # Note\n/// Thread-safe.\npub fn f() {}";
+        let item = rust_item(src);
+        assert!(tag_of(&item, &TagKind::Note).is_some(),
+            "# Note should become TagKind::Note");
+
+        let src2 = "/// Brief.\n///\n/// # Notes\n/// See the module docs.\npub fn f() {}";
+        let item2 = rust_item(src2);
+        assert!(tag_of(&item2, &TagKind::Note).is_some(), "# Notes (plural) should work too");
+    }
+
+    #[test]
+    fn rust_see_also_section_becomes_see_tag() {
+        let src = "/// Brief.\n///\n/// # See Also\n/// [`other_fn`]\npub fn f() {}";
+        let item = rust_item(src);
+        assert!(tag_of(&item, &TagKind::See).is_some(),
+            "# See Also should become TagKind::See");
+    }
+
+    #[test]
+    fn rust_deprecated_section_becomes_deprecated_tag() {
+        let src = "/// Brief.\n///\n/// # Deprecated\n/// Use `new_fn` instead.\npub fn f() {}";
+        let item = rust_item(src);
+        assert!(tag_of(&item, &TagKind::Deprecated).is_some());
+    }
+
+    #[test]
+    fn rust_warning_section_becomes_warning_tag() {
+        let src = "/// Brief.\n///\n/// # Warning\n/// Do not call from async context.\npub fn f() {}";
+        let item = rust_item(src);
+        assert!(tag_of(&item, &TagKind::Warning).is_some());
+    }
+
+    #[test]
+    fn rust_arguments_section_captured() {
+        let src = "/// Brief.\n///\n/// # Arguments\n/// - `x`: The value.\npub fn f(x: u32) {}";
+        let item = rust_item(src);
+        let t = other_tag(&item, "arguments");
+        assert!(t.is_some(), "# Arguments should become Other(\"arguments\")");
+        assert!(t.unwrap().text.contains('x'));
+    }
+
+    #[test]
+    fn rust_parameters_section_captured() {
+        let src = "/// Brief.\n///\n/// # Parameters\n/// - `n`: Count.\npub fn f(n: usize) {}";
+        let item = rust_item(src);
+        assert!(other_tag(&item, "arguments").is_some(),
+            "# Parameters should also map to Other(\"arguments\")");
+    }
+
+    #[test]
+    fn rust_double_hash_heading_also_works() {
+        // ## subsection headings should be treated identically to # headings.
+        let src = "/// Brief.\n///\n/// ## Examples\n/// ```\n/// let _ = f();\n/// ```\npub fn f() {}";
+        let item = rust_item(src);
+        assert!(tag_of(&item, &TagKind::Example).is_some(),
+            "## Examples (double hash) should also become TagKind::Example");
+    }
+
+    #[test]
+    fn rust_unknown_heading_stays_in_body() {
+        // Custom / unknown headings should not be converted to tags.
+        let src = "/// Brief.\n///\n/// # Implementation Details\n/// Uses SIMD internally.\npub fn f() {}";
+        let item = rust_item(src);
+        assert!(item.tags.iter().all(|t| t.kind != TagKind::Other("implementation details".to_string())),
+            "unknown section heading should remain in body prose");
+        assert!(item.body.contains("Implementation Details") || item.body.contains("SIMD"),
+            "unknown heading content should land in body");
+    }
+
+    #[test]
+    fn rust_multiple_sections_all_captured() {
+        let src = concat!(
+            "/// Compute mean.\n",
+            "///\n",
+            "/// # Panics\n",
+            "/// If slice is empty.\n",
+            "///\n",
+            "/// # Examples\n",
+            "/// ```\n",
+            "/// assert_eq!(mean(&[1.0, 3.0]), 2.0);\n",
+            "/// ```\n",
+            "pub fn mean(xs: &[f64]) -> f64 { todo!() }\n"
+        );
+        let item = rust_item(src);
+        assert_eq!(item.brief, "Compute mean.");
+        assert!(other_tag(&item, "panics").is_some());
+        assert!(tag_of(&item, &TagKind::Example).is_some());
+        assert!(tag_of(&item, &TagKind::Example).unwrap().text.contains("assert_eq!"));
+    }
+
+    #[test]
+    fn rust_brief_not_consumed_by_sections() {
+        // The first sentence before any section heading is still the brief.
+        let src = "/// Return the length of s.\n///\n/// # Panics\n/// Never.\npub fn len(s: &str) -> usize { s.len() }";
+        let item = rust_item(src);
+        assert_eq!(item.brief, "Return the length of s.");
     }
 
     // ── Fortran ───────────────────────────────────────────────────────────────
@@ -683,6 +841,525 @@ public void parse(String s) {}"#;
         let src = "//go:generate stringer -type=Status\nfunc Foo() {}";
         let got = items(src, &DocLanguage::Go);
         assert!(got.is_empty(), "//go: directives must not become doc items");
+    }
+
+    // ── Doxygen / Javadoc tag coverage ───────────────────────────────────────
+    //
+    // Tests every standard tag through the C extractor (primary Doxygen user).
+    // Languages that share parse_tag_start (C, C++, Rust, Fortran, Ada, Java, D)
+    // all benefit from these tests.
+
+    fn c_item(src: &str) -> DocItem {
+        let got = items(src, &DocLanguage::C);
+        assert!(!got.is_empty(), "expected item from: {}", src);
+        got.into_iter().next().unwrap()
+    }
+
+    fn tag_of<'a>(item: &'a DocItem, kind: &TagKind) -> Option<&'a DocTag> {
+        item.tags.iter().find(|t| &t.kind == kind)
+    }
+
+    fn other_tag<'a>(item: &'a DocItem, label: &str) -> Option<&'a DocTag> {
+        item.tags.iter().find(|t| t.kind == TagKind::Other(label.to_string()))
+    }
+
+    #[test]
+    fn tag_brief_at_prefix() {
+        let item = c_item("/** @brief Compute sum. */\nint add(int a, int b);");
+        assert_eq!(item.brief, "Compute sum.");
+    }
+
+    #[test]
+    fn tag_brief_backslash_prefix() {
+        let item = c_item("/** \\brief Compute sum. */\nint add(int a, int b);");
+        assert_eq!(item.brief, "Compute sum.");
+    }
+
+    #[test]
+    fn tag_param_extracts_name_and_desc() {
+        let item = c_item("/**\n * @param n   The count.\n * @param buf  The buffer.\n */\nvoid f(int n, char *buf);");
+        let params: Vec<_> = item.tags.iter().filter(|t| t.kind == TagKind::Param).collect();
+        assert_eq!(params.len(), 2);
+        assert_eq!(params[0].name.as_deref(), Some("n"));
+        assert_eq!(params[0].text, "The count.");
+        assert_eq!(params[1].name.as_deref(), Some("buf"));
+    }
+
+    #[test]
+    fn tag_param_in_out_variants() {
+        let src = "/**\n * @param[in]     x  Input.\n * @param[out]    y  Output.\n * @param[in,out] z  Both.\n */\nvoid f(int x, int *y, int *z);";
+        let item = c_item(src);
+        let params: Vec<_> = item.tags.iter().filter(|t| t.kind == TagKind::Param).collect();
+        assert_eq!(params.len(), 3, "all three directional variants should become Param");
+        assert_eq!(params[0].name.as_deref(), Some("x"));
+        assert_eq!(params[1].name.as_deref(), Some("y"));
+        assert_eq!(params[2].name.as_deref(), Some("z"));
+    }
+
+    #[test]
+    fn tag_tparam_extracts_name_and_desc() {
+        let src = "/**\n * @tparam T  Element type.\n * @tparam N  Array size.\n */\nvoid f();";
+        let item = c_item(src);
+        let tparams: Vec<_> = item.tags.iter()
+            .filter(|t| t.kind == TagKind::Other("tparam".to_string()))
+            .collect();
+        assert_eq!(tparams.len(), 2, "@tparam tags should be captured");
+        assert_eq!(tparams[0].name.as_deref(), Some("T"), "@tparam name should be extracted");
+        assert_eq!(tparams[0].text, "Element type.");
+        assert_eq!(tparams[1].name.as_deref(), Some("N"));
+    }
+
+    #[test]
+    fn tag_return_and_returns() {
+        let item = c_item("/** @return The computed value. */\nint f();");
+        assert!(tag_of(&item, &TagKind::Return).is_some());
+        assert_eq!(tag_of(&item, &TagKind::Return).unwrap().text, "The computed value.");
+
+        let item2 = c_item("/** @returns The computed value. */\nint f();");
+        assert!(tag_of(&item2, &TagKind::Return).is_some());
+    }
+
+    #[test]
+    fn tag_retval_embeds_value_in_label() {
+        let src = "/**\n * @retval  0  Success.\n * @retval -1  I/O error.\n */\nint f();";
+        let item = c_item(src);
+        let rv0 = other_tag(&item, "retval 0");
+        assert!(rv0.is_some(), "@retval 0 should produce Other(\"retval 0\")");
+        assert_eq!(rv0.unwrap().text, "Success.");
+        let rv1 = other_tag(&item, "retval -1");
+        assert!(rv1.is_some(), "@retval -1 should produce Other(\"retval -1\")");
+    }
+
+    #[test]
+    fn tag_throws_extracts_type() {
+        let src = "/** @throws std::runtime_error On failure. */\nvoid f();";
+        let item = c_item(src);
+        let t = other_tag(&item, "throws std::runtime_error");
+        assert!(t.is_some(), "@throws should produce Other(\"throws <type>\")");
+        assert_eq!(t.unwrap().text, "On failure.");
+    }
+
+    #[test]
+    fn tag_throw_singular_same_as_throws() {
+        // @throw (singular) must be treated identically to @throws.
+        let src = "/** @throw std::bad_alloc Out of memory. */\nvoid f();";
+        let item = c_item(src);
+        let t = other_tag(&item, "throws std::bad_alloc");
+        assert!(t.is_some(), "@throw should be normalised to Other(\"throws <type>\")");
+    }
+
+    #[test]
+    fn tag_exception_same_as_throws() {
+        let src = "/** @exception IOException When IO fails. */\nvoid f();";
+        let item = c_item(src);
+        let t = other_tag(&item, "throws IOException");
+        assert!(t.is_some(), "@exception should be normalised to Other(\"throws <type>\")");
+    }
+
+    #[test]
+    fn tag_throws_without_type() {
+        // @throws with no following word → label is just "throws".
+        let src = "/**\n * @throws\n */\nvoid f();";
+        let item = c_item(src);
+        let t = other_tag(&item, "throws");
+        assert!(t.is_some(), "typeless @throws should produce Other(\"throws\")");
+    }
+
+    #[test]
+    fn tag_note() {
+        let item = c_item("/** @note Thread-safe when mutex is held. */\nvoid f();");
+        let n = tag_of(&item, &TagKind::Note);
+        assert!(n.is_some());
+        assert!(n.unwrap().text.contains("Thread-safe"));
+    }
+
+    #[test]
+    fn tag_warning_and_warn() {
+        let item = c_item("/** @warning Do not call from ISR. */\nvoid f();");
+        assert!(tag_of(&item, &TagKind::Warning).is_some());
+
+        let item2 = c_item("/** @warn Avoid concurrent use. */\nvoid f();");
+        assert!(tag_of(&item2, &TagKind::Warning).is_some());
+    }
+
+    #[test]
+    fn tag_see_and_sa() {
+        let item = c_item("/** @see other_func */\nvoid f();");
+        assert!(tag_of(&item, &TagKind::See).is_some());
+
+        let item2 = c_item("/** @sa other_func */\nvoid f();");
+        assert!(tag_of(&item2, &TagKind::See).is_some());
+    }
+
+    #[test]
+    fn tag_since() {
+        let item = c_item("/** @since 2.0 */\nvoid f();");
+        let s = tag_of(&item, &TagKind::Since);
+        assert!(s.is_some());
+        assert_eq!(s.unwrap().text, "2.0");
+    }
+
+    #[test]
+    fn tag_deprecated() {
+        let item = c_item("/** @deprecated Use new_func() instead. */\nvoid f();");
+        assert!(tag_of(&item, &TagKind::Deprecated).is_some());
+    }
+
+    #[test]
+    fn tag_example_and_code() {
+        let item = c_item("/** @example foo.c */\nvoid f();");
+        assert!(tag_of(&item, &TagKind::Example).is_some());
+
+        let item2 = c_item("/** @code int x = f(); @endcode */\nvoid f();");
+        assert!(tag_of(&item2, &TagKind::Example).is_some());
+    }
+
+    #[test]
+    fn tag_pre_post_invariant_captured() {
+        let src = "/**\n * @pre  n > 0\n * @post result >= 0\n * @invariant buf != NULL\n */\nvoid f();";
+        let item = c_item(src);
+        assert!(other_tag(&item, "pre").is_some(),  "@pre should be captured as Other");
+        assert!(other_tag(&item, "post").is_some(), "@post should be captured as Other");
+        assert!(other_tag(&item, "invariant").is_some(), "@invariant should be captured as Other");
+        assert_eq!(other_tag(&item, "pre").unwrap().text, "n > 0");
+        assert_eq!(other_tag(&item, "post").unwrap().text, "result >= 0");
+    }
+
+    #[test]
+    fn tag_attention_remark_remarks_details_captured() {
+        let src = "/**\n * @attention Critical section.\n * @remark Internal use only.\n * @remarks Avoid re-entry.\n * @details More detail here.\n */\nvoid f();";
+        let item = c_item(src);
+        assert!(other_tag(&item, "attention").is_some());
+        assert!(other_tag(&item, "remark").is_some());
+        assert!(other_tag(&item, "remarks").is_some());
+        assert!(other_tag(&item, "details").is_some());
+        assert_eq!(other_tag(&item, "attention").unwrap().text, "Critical section.");
+    }
+
+    #[test]
+    fn tag_todo_bug_captured() {
+        let src = "/**\n * @todo Implement fast path.\n * @bug Returns wrong sign for negative n.\n */\nvoid f();";
+        let item = c_item(src);
+        assert!(other_tag(&item, "todo").is_some());
+        assert_eq!(other_tag(&item, "todo").unwrap().text, "Implement fast path.");
+        assert!(other_tag(&item, "bug").is_some());
+    }
+
+    #[test]
+    fn tag_author_version_date_copyright_captured() {
+        let src = "/**\n * @author Jane Doe\n * @version 1.3\n * @date 2025-01-15\n * @copyright MIT\n */\nvoid f();";
+        let item = c_item(src);
+        assert!(other_tag(&item, "author").is_some());
+        assert_eq!(other_tag(&item, "author").unwrap().text, "Jane Doe");
+        assert!(other_tag(&item, "version").is_some());
+        assert!(other_tag(&item, "date").is_some());
+        assert!(other_tag(&item, "copyright").is_some());
+    }
+
+    #[test]
+    fn tag_file_ingroup_par_captured() {
+        let src = "/**\n * @file  utils.h\n * @ingroup core\n * @par   Performance\n * O(log n) per call.\n */\nvoid f();";
+        let item = c_item(src);
+        assert!(other_tag(&item, "file").is_some());
+        assert!(other_tag(&item, "ingroup").is_some());
+        assert!(other_tag(&item, "par").is_some());
+    }
+
+    #[test]
+    fn tag_backslash_variants_work() {
+        // All tags accept both @ and \ prefix; each tag must be on its own line.
+        let src = "/**\n * \\note Watch out.\n * \\warning Dangerous!\n */\nvoid f();";
+        let item = c_item(src);
+        assert!(tag_of(&item, &TagKind::Note).is_some());
+        assert!(tag_of(&item, &TagKind::Warning).is_some());
+    }
+
+    #[test]
+    fn tag_unknown_goes_to_other() {
+        let item = c_item("/** @customtag Some text. */\nvoid f();");
+        assert!(other_tag(&item, "customtag").is_some());
+        assert_eq!(other_tag(&item, "customtag").unwrap().text, "Some text.");
+    }
+
+    #[test]
+    fn tag_single_char_backslash_not_parsed_as_tag() {
+        // \n, \t, \0 etc. must not become tags — enforced by tag.len() < 2 guard.
+        let src = "/** Uses \\n and \\t for formatting. */\nvoid f();";
+        let item = c_item(src);
+        let bad: Vec<_> = item.tags.iter()
+            .filter(|t| matches!(&t.kind, TagKind::Other(s) if s == "n" || s == "t"))
+            .collect();
+        assert!(bad.is_empty(), "single-char escape sequences must not become tags");
+    }
+
+    #[test]
+    fn tag_multiline_continuation_appended() {
+        let src = "/**\n * @param buf  The source buffer;\n *   must be null-terminated.\n */\nvoid f(char *buf);";
+        let item = c_item(src);
+        let p = item.tags.iter().find(|t| t.kind == TagKind::Param).unwrap();
+        assert!(p.text.contains("null-terminated"), "continuation line should be appended to tag text");
+    }
+
+    #[test]
+    fn tag_tparam_in_cpp_template() {
+        let src = "/**\n * @brief Generic min.\n * @tparam T Comparable type.\n * @param a First value.\n * @param b Second value.\n * @return The lesser of a and b.\n */\ntemplate<typename T>\nT min_of(T a, T b);";
+        let item = c_item(src);
+        assert_eq!(item.brief, "Generic min.");
+        let tp = item.tags.iter().find(|t| t.kind == TagKind::Other("tparam".to_string())).unwrap();
+        assert_eq!(tp.name.as_deref(), Some("T"));
+        assert_eq!(tp.text, "Comparable type.");
+        let params: Vec<_> = item.tags.iter().filter(|t| t.kind == TagKind::Param).collect();
+        assert_eq!(params.len(), 2);
+        assert!(tag_of(&item, &TagKind::Return).is_some());
+    }
+
+    // ── Scope / package qualification ────────────────────────────────────────
+
+    #[test]
+    fn rust_mod_qualifies_function() {
+        let src = "pub mod math {\n/// Compute the square.\npub fn square(x: f64) -> f64 { x * x }\n}";
+        let got = items(src, &DocLanguage::Rust);
+        assert!(got.iter().any(|i| i.name == "math::square"),
+            "function inside mod should be qualified; got: {:?}",
+            got.iter().map(|i| &i.name).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn rust_nested_mod_qualifies_function() {
+        let src = concat!(
+            "pub mod outer {\n",
+            "pub mod inner {\n",
+            "/// Nested.\n",
+            "pub fn f() {}\n",
+            "}\n",
+            "}\n"
+        );
+        let got = items(src, &DocLanguage::Rust);
+        assert!(got.iter().any(|i| i.name == "outer::inner::f"),
+            "got: {:?}", got.iter().map(|i| &i.name).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn rust_mod_is_itself_extracted() {
+        let src = "/// Utilities.\npub mod utils {\n/// Helper.\npub fn helper() {}\n}";
+        let got = items(src, &DocLanguage::Rust);
+        // The mod declaration itself gets extracted as Module.
+        assert!(got.iter().any(|i| i.name == "utils" && matches!(i.kind, DocKind::Module)),
+            "mod should be extracted as Module; got: {:?}",
+            got.iter().map(|i| (&i.name, &i.kind)).collect::<Vec<_>>());
+        // Function inside the mod should be qualified.
+        assert!(got.iter().any(|i| i.name == "utils::helper"),
+            "helper should be utils::helper; got: {:?}",
+            got.iter().map(|i| &i.name).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn go_package_qualifies_items() {
+        let src = "package geom\n// Clamp returns x clamped to [lo, hi].\nfunc Clamp(x float64) float64 { return x }";
+        let got = items(src, &DocLanguage::Go);
+        assert!(got.iter().any(|i| i.name == "geom.Clamp"),
+            "function should be qualified with package name; got: {:?}",
+            got.iter().map(|i| &i.name).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn go_no_package_no_qualification() {
+        // Source with no package declaration — names stay unqualified.
+        let src = "// Foo does something.\nfunc Foo() {}";
+        let got = items(src, &DocLanguage::Go);
+        assert!(got.iter().any(|i| i.name == "Foo"),
+            "without package declaration names should be unqualified; got: {:?}",
+            got.iter().map(|i| &i.name).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn ada_package_qualifies_items() {
+        let src = "--! A math package.\npackage Math is\n--! Double a value.\nfunction Double (X : Float) return Float;\nend Math;";
+        let got = items(src, &DocLanguage::Ada);
+        assert!(got.iter().any(|i| i.name == "Math.Double"),
+            "function should be qualified with package name; got: {:?}",
+            got.iter().map(|i| &i.name).collect::<Vec<_>>());
+        // Package item itself should remain unqualified.
+        assert!(got.iter().any(|i| i.name == "Math" && matches!(i.kind, DocKind::Module)),
+            "package item should remain as 'Math'; got: {:?}",
+            got.iter().map(|i| (&i.name, &i.kind)).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn d_module_qualifies_items() {
+        let src = "/// A utility module.\nmodule utils;\n/// Add two values.\nint add(int a, int b);";
+        let got = items(src, &DocLanguage::D);
+        assert!(got.iter().any(|i| i.name == "utils.add"),
+            "function should be qualified with module name; got: {:?}",
+            got.iter().map(|i| &i.name).collect::<Vec<_>>());
+        // Module item itself should remain unqualified.
+        assert!(got.iter().any(|i| i.name == "utils" && matches!(i.kind, DocKind::Module)),
+            "module item should remain as 'utils'; got: {:?}",
+            got.iter().map(|i| (&i.name, &i.kind)).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn cpp_defgroup_stamps_item_with_group() {
+        let src = concat!(
+            "/** @addtogroup io */\n",
+            "/** @{ */\n",
+            "/** Open a file. */\n",
+            "FILE *fopen(const char *path, const char *mode);\n",
+            "/** @} */\n"
+        );
+        let got = items(src, &DocLanguage::Cpp);
+        let fopen = got.iter().find(|i| i.name == "fopen")
+            .expect("fopen should be extracted");
+        assert_eq!(fopen.meta.group.as_deref(), Some("io"),
+            "fopen should be in group 'io'");
+    }
+
+    #[test]
+    fn cpp_ingroup_tag_sets_group() {
+        let src = "/**\n * @ingroup io\n * @brief Open a file.\n */\nFILE *fopen(const char *path, const char *mode);";
+        let got = items(src, &DocLanguage::C);
+        let fopen = got.iter().find(|i| i.name == "fopen")
+            .expect("fopen should be extracted");
+        assert_eq!(fopen.meta.group.as_deref(), Some("io"),
+            "@ingroup tag should set meta.group");
+    }
+
+    #[test]
+    fn cpp_group_fence_does_not_create_item() {
+        // Pure @{ and @} blocks should not produce doc items.
+        let src = "/** @addtogroup core */\n/** @{ */\n/** @} */\n";
+        let got = items(src, &DocLanguage::C);
+        assert!(got.is_empty(),
+            "pure group fences should not emit items; got: {:?}",
+            got.iter().map(|i| &i.name).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn cpp_group_items_outside_fence_have_no_group() {
+        // Items before any @{ block have no group.
+        let src = "/** No group here. */\nvoid before();\n/** @addtogroup io */\n/** @{ */\n/** In group. */\nvoid inside();\n/** @} */\n/** Back out. */\nvoid after();\n";
+        let got = items(src, &DocLanguage::C);
+        let before = got.iter().find(|i| i.name == "before").expect("before not found");
+        assert!(before.meta.group.is_none(), "before() should have no group");
+        let inside = got.iter().find(|i| i.name == "inside").expect("inside not found");
+        assert_eq!(inside.meta.group.as_deref(), Some("io"));
+        let after = got.iter().find(|i| i.name == "after").expect("after not found");
+        assert!(after.meta.group.is_none(), "after() should have no group after @}}");
+    }
+
+    #[test]
+    fn cpp_defgroup_and_open_combined_block() {
+        // @addtogroup and @{ in the same block comment (Doxygen-style combined fence).
+        let src = "/**\n * @addtogroup net\n * @{\n */\n/** Connect to host. */\nvoid connect();\n/**\n * @}\n */\n";
+        let got = items(src, &DocLanguage::C);
+        let conn = got.iter().find(|i| i.name == "connect").expect("connect not found");
+        assert_eq!(conn.meta.group.as_deref(), Some("net"),
+            "item inside combined @addtogroup+@{{ should get group 'net'");
+    }
+
+    #[test]
+    fn cpp_triple_slash_group_fence() {
+        // /// @addtogroup + /// @{ style (not just /** */).
+        let src = "/// @addtogroup utils\n/// @{\n/// Compute abs.\nint abs_val(int x);\n/// @}\n";
+        let got = items(src, &DocLanguage::Cpp);
+        let abs = got.iter().find(|i| i.name == "abs_val").expect("abs_val not found");
+        assert_eq!(abs.meta.group.as_deref(), Some("utils"),
+            "/// @addtogroup + @{{ should stamp group on item");
+    }
+
+    // ── Rust mod edge cases ───────────────────────────────────────────────────
+
+    #[test]
+    fn rust_external_mod_not_tracked() {
+        // `mod foo;` (no brace) is an external module — must NOT create a scope.
+        let src = "mod external;\n/// Top-level function.\npub fn top() {}";
+        let got = items(src, &DocLanguage::Rust);
+        assert!(got.iter().any(|i| i.name == "top"),
+            "function after `mod foo;` should be unqualified; got: {:?}",
+            got.iter().map(|i| &i.name).collect::<Vec<_>>());
+        assert!(!got.iter().any(|i| i.name == "external::top"),
+            "external mod declaration should not create a scope");
+    }
+
+    #[test]
+    fn rust_sibling_mods_are_independent() {
+        // Items in mod a and mod b must not be cross-qualified.
+        let src = concat!(
+            "pub mod a {\n",
+            "/// Function in a.\npub fn fa() {}\n",
+            "}\n",
+            "pub mod b {\n",
+            "/// Function in b.\npub fn fb() {}\n",
+            "}\n"
+        );
+        let got = items(src, &DocLanguage::Rust);
+        assert!(got.iter().any(|i| i.name == "a::fa"),
+            "fa should be a::fa; got: {:?}", got.iter().map(|i| &i.name).collect::<Vec<_>>());
+        assert!(got.iter().any(|i| i.name == "b::fb"),
+            "fb should be b::fb; got: {:?}", got.iter().map(|i| &i.name).collect::<Vec<_>>());
+        assert!(!got.iter().any(|i| i.name == "a::b::fb"),
+            "b should not be nested inside a");
+    }
+
+    #[test]
+    fn rust_pub_crate_mod_tracked() {
+        let src = "pub(crate) mod inner {\n/// Hidden helper.\npub(crate) fn help() {}\n}";
+        let got = items(src, &DocLanguage::Rust);
+        assert!(got.iter().any(|i| i.name == "inner::help"),
+            "pub(crate) mod should be tracked; got: {:?}",
+            got.iter().map(|i| &i.name).collect::<Vec<_>>());
+    }
+
+    // ── Go / Ada / D edge cases ───────────────────────────────────────────────
+
+    #[test]
+    fn go_package_main_qualifies() {
+        let src = "package main\n// Run is the entry point.\nfunc Run() {}";
+        let got = items(src, &DocLanguage::Go);
+        assert!(got.iter().any(|i| i.name == "main.Run"),
+            "package main items should be qualified; got: {:?}",
+            got.iter().map(|i| &i.name).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn ada_no_package_means_no_qualification() {
+        // Ada source with no PACKAGE declaration: names stay bare.
+        let src = "--! Compute factorial.\nfunction Fact (N : Integer) return Integer;";
+        let got = items(src, &DocLanguage::Ada);
+        assert!(got.iter().any(|i| i.name == "Fact"),
+            "without package, Ada names should be unqualified; got: {:?}",
+            got.iter().map(|i| &i.name).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn ada_package_body_not_treated_as_package() {
+        // `package body Foo is` must not become the package qualifier.
+        let src = "package body Foo is\n--! Aux helper.\nprocedure Aux;\nend Foo;";
+        let got = items(src, &DocLanguage::Ada);
+        // Either no qualification (body ignored) or correct body-package qualification.
+        // The key invariant: names should NOT start with "body."
+        assert!(!got.iter().any(|i| i.name.to_ascii_lowercase().starts_with("body.")),
+            "PACKAGE BODY should not create a 'body.' prefix; got: {:?}",
+            got.iter().map(|i| &i.name).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn d_no_module_means_no_qualification() {
+        let src = "/// Just a function.\nint add(int a, int b);";
+        let got = items(src, &DocLanguage::D);
+        assert!(got.iter().any(|i| i.name == "add"),
+            "D source without module declaration should not qualify; got: {:?}",
+            got.iter().map(|i| &i.name).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn d_dotted_module_name_takes_first_identifier() {
+        // `module foo.bar;` — only the first identifier is used as prefix.
+        let src = "/// Module doc.\nmodule foo.bar;\n/// A function.\nint f();";
+        let got = items(src, &DocLanguage::D);
+        assert!(got.iter().any(|i| i.name == "foo.f"),
+            "dotted module name should use first identifier; got: {:?}",
+            got.iter().map(|i| &i.name).collect::<Vec<_>>());
     }
 
     // ── Clang integration ────────────────────────────────────────────────────

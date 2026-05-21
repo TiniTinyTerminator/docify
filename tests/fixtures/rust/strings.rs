@@ -13,6 +13,9 @@ pub fn char_count(s: &str) -> usize {
 ///
 /// Appends a `…` suffix when the string is shortened.
 /// Returns a copy of `s` unchanged when `s.chars().count() <= max_chars`.
+///
+/// # Panics
+/// Never panics; a `max_chars` of zero returns an empty string.
 pub fn truncate(s: &str, max_chars: usize) -> String {
     todo!()
 }
@@ -20,6 +23,12 @@ pub fn truncate(s: &str, max_chars: usize) -> String {
 /// Repeat `s` exactly `n` times.
 ///
 /// Returns an empty string when `n == 0`.
+///
+/// # Examples
+/// ```
+/// assert_eq!(repeat_str("ab", 3), "ababab");
+/// assert_eq!(repeat_str("x", 0), "");
+/// ```
 pub fn repeat_str(s: &str, n: usize) -> String {
     todo!()
 }
@@ -28,6 +37,14 @@ pub fn repeat_str(s: &str, n: usize) -> String {
 ///
 /// When `s` is already as wide or wider than `width` the string is returned
 /// unchanged (no truncation is performed).
+///
+/// # Arguments
+/// - `s`: The string to centre.
+/// - `width`: Target field width in characters.
+/// - `pad`: The padding character.
+///
+/// # Returns
+/// The padded string.
 pub fn centre(s: &str, width: usize, pad: char) -> String {
     todo!()
 }
@@ -51,6 +68,9 @@ impl ListBuilder {
     }
 
     /// Finish building and return the joined string.
+    ///
+    /// # Returns
+    /// The items joined by the separator supplied to [`new`].
     pub fn finish(self) -> String {
         todo!()
     }

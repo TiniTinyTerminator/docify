@@ -23,6 +23,7 @@ pub fn render_markdown(set: &DocSet, out_dir: &Path) -> std::io::Result<()> {
     std::fs::create_dir_all(out_dir.join("namespace"))?;
     std::fs::create_dir_all(out_dir.join("class"))?;
     std::fs::create_dir_all(out_dir.join("module"))?;
+    std::fs::create_dir_all(out_dir.join("group"))?;
 
     let (groups, module_by_file) = group_items(&set.items, &set.source_root);
     let sym_idx = SymbolIndex::build(&set.items, &set.source_root, &module_by_file);
@@ -45,6 +46,14 @@ pub fn render_markdown(set: &DocSet, out_dir: &Path) -> std::io::Result<()> {
     for (mod_name, items) in &groups.modules {
         let page = format!("module/{}.md", mod_name.to_ascii_lowercase());
         let content = render_module_page(mod_name, items, &sym_idx, &page);
+        std::fs::write(out_dir.join(&page), content)?;
+    }
+
+    // Doxygen group pages
+    for (g, items) in &groups.groups {
+        let slug = group_slug(g);
+        let page = format!("group/{slug}.md");
+        let content = render_group_page(g, items, &sym_idx, &page);
         std::fs::write(out_dir.join(&page), content)?;
     }
 
@@ -74,13 +83,14 @@ pub fn render_markdown(set: &DocSet, out_dir: &Path) -> std::io::Result<()> {
 // ── Item grouping ─────────────────────────────────────────────────────────────
 
 struct Groups<'a> {
-    /// C++ namespace qualified path → items at that scope (excl. class members).
+    /// C++/Rust namespace (or module) qualified path → items at that scope.
     namespaces: BTreeMap<String, Vec<&'a DocItem>>,
-    /// Qualified class/struct name → items belonging to that class
-    /// (the class item itself is first, then members).
+    /// Qualified class/struct name → items belonging to that class.
     classes:    BTreeMap<String, Vec<&'a DocItem>>,
     /// Fortran module name → all items from that module's source file.
     modules:    BTreeMap<String, Vec<&'a DocItem>>,
+    /// Doxygen @defgroup/@addtogroup group name → items in that group.
+    groups:     BTreeMap<String, Vec<&'a DocItem>>,
     /// Fallback: source-relative path → items not assigned to any scope.
     files:      BTreeMap<String, Vec<&'a DocItem>>,
 }
@@ -105,11 +115,19 @@ fn group_items<'a>(
         namespaces: BTreeMap::new(),
         classes:    BTreeMap::new(),
         modules:    BTreeMap::new(),
+        groups:     BTreeMap::new(),
         files:      BTreeMap::new(),
     };
 
     for item in items {
-        let is_cpp = matches!(item.lang, DocLanguage::C | DocLanguage::Cpp);
+        let is_cpp      = matches!(item.lang, DocLanguage::C | DocLanguage::Cpp);
+        // Rust uses `::` for mod qualification, same routing as C++ namespaces.
+        let has_ns_scope = is_cpp || item.lang == DocLanguage::Rust;
+
+        // Record Doxygen group membership (can co-exist with namespace routing).
+        if let Some(ref g) = item.meta.group {
+            groups.groups.entry(g.clone()).or_default().push(item);
+        }
 
         // Class member (populated by libclang extractor).
         if is_cpp && item.meta.parent.is_some() {
@@ -129,8 +147,8 @@ fn group_items<'a>(
             continue;
         }
 
-        // Other C++ items with a namespace qualifier.
-        if is_cpp && item.name.contains("::") {
+        // C++ or Rust items with a scope qualifier (`::`) → namespace/module page.
+        if has_ns_scope && item.name.contains("::") {
             let ns = &item.name[..item.name.rfind("::").unwrap()];
             groups.namespaces.entry(ns.to_string()).or_default().push(item);
             continue;
@@ -200,7 +218,8 @@ impl SymbolIndex {
 
 /// Determine the output page path (relative to doc root) for a given item.
 fn page_path_for(item: &DocItem, source_root: &Path, module_by_file: &HashMap<String, String>) -> String {
-    let is_cpp = matches!(item.lang, DocLanguage::C | DocLanguage::Cpp);
+    let is_cpp       = matches!(item.lang, DocLanguage::C | DocLanguage::Cpp);
+    let has_ns_scope = is_cpp || item.lang == DocLanguage::Rust;
 
     if is_cpp && item.meta.parent.is_some() {
         let parent = parent_qualified_name(item);
@@ -209,7 +228,7 @@ fn page_path_for(item: &DocItem, source_root: &Path, module_by_file: &HashMap<St
     if is_cpp && matches!(item.kind, DocKind::Class | DocKind::Struct) && item.name.contains("::") {
         return format!("class/{}.md", class_slug(&item.name));
     }
-    if is_cpp && item.name.contains("::") {
+    if has_ns_scope && item.name.contains("::") {
         let ns = &item.name[..item.name.rfind("::").unwrap()];
         return format!("namespace/{}.md", ns_slug(ns));
     }
@@ -506,6 +525,76 @@ fn render_module_page(
     md
 }
 
+// ── Doxygen group pages ───────────────────────────────────────────────────────
+
+fn render_group_page(
+    group: &str,
+    items: &[&DocItem],
+    sym:   &SymbolIndex,
+    page:  &str,
+) -> String {
+    let mut md = String::new();
+    let depth_prefix = "../";
+
+    let _ = writeln!(md, "# group `{group}`\n");
+    let _ = writeln!(md, "[← Index]({depth_prefix}index.md) | [All symbols]({depth_prefix}symbols.md)\n");
+    let _ = writeln!(md, "---\n");
+
+    let fns: Vec<&DocItem> = items.iter().copied()
+        .filter(|i| matches!(i.kind, DocKind::Function | DocKind::Subroutine)).collect();
+    let types: Vec<&DocItem> = items.iter().copied()
+        .filter(|i| matches!(i.kind, DocKind::Class | DocKind::Struct | DocKind::Enum
+                                   | DocKind::Typedef | DocKind::Interface)).collect();
+    let vars: Vec<&DocItem> = items.iter().copied()
+        .filter(|i| matches!(i.kind, DocKind::Variable | DocKind::Macro)).collect();
+
+    if !types.is_empty() {
+        let _ = writeln!(md, "## Types\n");
+        md.push_str("| Name | Summary |\n|------|---------|\n");
+        for item in &types {
+            let anchor = item_anchor_simple(item);
+            let brief  = md_table_escape(if item.brief.is_empty() { "—" } else { &item.brief });
+            let _ = writeln!(md, "| [{kind} `{name}`](#{anchor}) | {brief} |",
+                kind = item.kind.label(), name = item.name);
+        }
+        let _ = writeln!(md);
+    }
+
+    if !fns.is_empty() {
+        let _ = writeln!(md, "## Functions\n");
+        md.push_str("| Signature | Summary |\n|-----------|---------|\n");
+        for item in &fns {
+            let anchor = item_anchor_simple(item);
+            let sig    = if item.signature.is_empty() { item.name.as_str() }
+                         else { item.signature.trim_end_matches('{').trim() };
+            let brief  = md_table_escape(if item.brief.is_empty() { "—" } else { &item.brief });
+            let _ = writeln!(md, "| [`{sig}`](#{anchor}) | {brief} |");
+        }
+        let _ = writeln!(md);
+    }
+
+    if !vars.is_empty() {
+        let _ = writeln!(md, "## Variables / Macros\n");
+        md.push_str("| Name | Summary |\n|------|---------|\n");
+        for item in &vars {
+            let anchor = item_anchor_simple(item);
+            let brief  = md_table_escape(if item.brief.is_empty() { "—" } else { &item.brief });
+            let _ = writeln!(md, "| [`{}`](#{anchor}) | {brief} |", item.name);
+        }
+        let _ = writeln!(md);
+    }
+
+    let _ = writeln!(md, "---\n");
+    let _ = writeln!(md, "## Detailed Documentation\n");
+
+    let mut name_count: BTreeMap<String, usize> = BTreeMap::new();
+    for item in fns.iter().chain(vars.iter()).chain(types.iter()) {
+        let anchor = item_anchor_simple(item);
+        render_item(&mut md, item, &mut name_count, &anchor, sym, page);
+    }
+    md
+}
+
 // ── Index page ────────────────────────────────────────────────────────────────
 
 fn render_index(groups: &Groups<'_>) -> String {
@@ -539,6 +628,16 @@ fn render_index(groups: &Groups<'_>) -> String {
         for (mod_name, items) in &groups.modules {
             let slug = mod_name.to_ascii_lowercase();
             let _ = writeln!(md, "| [`{mod_name}`](module/{slug}.md) | {} |", items.len());
+        }
+        let _ = writeln!(md);
+    }
+
+    if !groups.groups.is_empty() {
+        let _ = writeln!(md, "## Groups\n");
+        md.push_str("| Group | Items |\n|-------|------:|\n");
+        for (g, items) in &groups.groups {
+            let slug = group_slug(g);
+            let _ = writeln!(md, "| [`{g}`](group/{slug}.md) | {} |", items.len());
         }
         let _ = writeln!(md);
     }
@@ -751,6 +850,16 @@ fn class_slug(name: &str) -> String {
     name.replace("::", "__").to_ascii_lowercase()
 }
 
+fn group_slug(name: &str) -> String {
+    name.chars()
+        .map(|c| if c.is_alphanumeric() || c == '_' { c.to_ascii_lowercase() } else { '_' })
+        .collect::<String>()
+        .split('_')
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join("_")
+}
+
 /// Stable anchor used by the symbol index (includes line for disambiguation).
 fn symbol_anchor(item: &DocItem) -> String {
     let name = if item.name.is_empty() { "anonymous" } else { &item.name };
@@ -896,5 +1005,144 @@ mod tests {
     #[test]
     fn relative_page_to_root() {
         assert_eq!(relative_page("namespace/stats.md", "index.md"), "../index.md");
+    }
+
+    #[test]
+    fn relative_page_from_group() {
+        assert_eq!(relative_page("group/io.md", "namespace/fs.md"), "../namespace/fs.md");
+        assert_eq!(relative_page("group/io.md", "index.md"), "../index.md");
+        assert_eq!(relative_page("group/io.md", "group/net.md"), "net.md");
+    }
+
+    // ── group_slug ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn group_slug_alphanumeric() {
+        assert_eq!(group_slug("io"),   "io");
+        assert_eq!(group_slug("core"), "core");
+    }
+
+    #[test]
+    fn group_slug_spaces_become_underscores() {
+        assert_eq!(group_slug("File IO"), "file_io");
+        assert_eq!(group_slug("my group"), "my_group");
+    }
+
+    #[test]
+    fn group_slug_special_chars_become_underscores() {
+        assert_eq!(group_slug("io::fs"), "io_fs");
+        assert_eq!(group_slug("my-group"), "my_group");
+    }
+
+    #[test]
+    fn group_slug_deduplicates_underscores() {
+        // Double separators collapse to one.
+        assert_eq!(group_slug("a::b"), "a_b");
+        assert_eq!(group_slug("a  b"), "a_b");
+    }
+
+    // ── group_items routing ───────────────────────────────────────────────────
+
+    fn make_item(name: &str, kind: DocKind, lang: DocLanguage, group: Option<&str>) -> DocItem {
+        DocItem {
+            name: name.into(),
+            kind,
+            brief: "Brief.".into(),
+            body:  String::new(),
+            tags:  Vec::new(),
+            file:  Path::new("src/lib.c").to_path_buf(),
+            line:  1,
+            lang,
+            signature: String::new(),
+            meta: DocMeta { group: group.map(str::to_string), ..Default::default() },
+        }
+    }
+
+    #[test]
+    fn grouped_item_appears_in_groups_bucket() {
+        let item = make_item("fopen", DocKind::Function, DocLanguage::C, Some("io"));
+        let items = vec![item];
+        let (groups, _) = group_items(&items, Path::new("."));
+        assert!(groups.groups.contains_key("io"),
+            "item with meta.group='io' should appear in groups['io']");
+        assert_eq!(groups.groups["io"].len(), 1);
+    }
+
+    #[test]
+    fn grouped_cpp_item_also_appears_in_namespace() {
+        // An item with both a namespace qualifier AND a group should land in both buckets.
+        let mut item = make_item("io::fopen", DocKind::Function, DocLanguage::Cpp, Some("posix"));
+        item.file = Path::new("src/io.cpp").to_path_buf();
+        let items = vec![item];
+        let (groups, _) = group_items(&items, Path::new("."));
+        assert!(groups.groups.contains_key("posix"),
+            "grouped item should appear in groups['posix']");
+        assert!(groups.namespaces.contains_key("io"),
+            "namespace-qualified item should also appear in namespaces['io']");
+    }
+
+    #[test]
+    fn ungrouped_item_has_no_group_entry() {
+        let item = make_item("malloc", DocKind::Function, DocLanguage::C, None);
+        let items = vec![item];
+        let (groups, _) = group_items(&items, Path::new("."));
+        assert!(groups.groups.is_empty(), "ungrouped item should not produce a groups entry");
+    }
+
+    #[test]
+    fn rust_scoped_item_routes_to_namespace_page() {
+        let item = make_item("math::add", DocKind::Function, DocLanguage::Rust, None);
+        let items = vec![item];
+        let (groups, _) = group_items(&items, Path::new("."));
+        assert!(groups.namespaces.contains_key("math"),
+            "Rust item with '::' should route to namespaces; got namespaces: {:?}",
+            groups.namespaces.keys().collect::<Vec<_>>());
+        assert!(groups.files.is_empty(),
+            "Rust scoped item should not fall through to files");
+    }
+
+    #[test]
+    fn rust_unscoped_item_routes_to_file_page() {
+        let item = make_item("free_fn", DocKind::Function, DocLanguage::Rust, None);
+        let items = vec![item];
+        let (groups, _) = group_items(&items, Path::new("."));
+        assert!(groups.namespaces.is_empty());
+        assert!(!groups.files.is_empty(), "unscoped Rust item should fall through to files");
+    }
+
+    // ── render_group_page ─────────────────────────────────────────────────────
+
+    #[test]
+    fn group_page_contains_group_name() {
+        let item = make_item("fopen", DocKind::Function, DocLanguage::C, Some("io"));
+        let dummy_sym = SymbolIndex { map: HashMap::new() };
+        let md = render_group_page("io", &[&item], &dummy_sym, "group/io.md");
+        assert!(md.contains("group `io`"), "{md}");
+    }
+
+    #[test]
+    fn group_page_lists_function() {
+        let item = make_item("fopen", DocKind::Function, DocLanguage::C, Some("io"));
+        let dummy_sym = SymbolIndex { map: HashMap::new() };
+        let md = render_group_page("io", &[&item], &dummy_sym, "group/io.md");
+        assert!(md.contains("## Functions"), "{md}");
+        assert!(md.contains("fopen"), "{md}");
+    }
+
+    #[test]
+    fn group_page_lists_type() {
+        let item = make_item("FILE", DocKind::Struct, DocLanguage::C, Some("io"));
+        let dummy_sym = SymbolIndex { map: HashMap::new() };
+        let md = render_group_page("io", &[&item], &dummy_sym, "group/io.md");
+        assert!(md.contains("## Types"), "{md}");
+        assert!(md.contains("FILE"), "{md}");
+    }
+
+    #[test]
+    fn group_page_has_back_link() {
+        let item = make_item("f", DocKind::Function, DocLanguage::C, Some("g"));
+        let dummy_sym = SymbolIndex { map: HashMap::new() };
+        let md = render_group_page("g", &[&item], &dummy_sym, "group/g.md");
+        assert!(md.contains("../index.md"), "group page should link back to index: {md}");
     }
 }

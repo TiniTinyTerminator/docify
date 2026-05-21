@@ -3,6 +3,7 @@ pub mod extract;
 pub mod markdown;
 pub mod render_md;
 pub mod render_tui;
+pub mod tui;
 pub mod util;
 #[cfg(feature = "clang")]
 pub mod extract_clang;

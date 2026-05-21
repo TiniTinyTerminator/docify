@@ -26,7 +26,7 @@ pub fn extract_file_clang(path: &Path) -> Vec<DocItem> {
     let clang = match Clang::new() {
         Ok(c)  => c,
         Err(e) => {
-            eprintln!("doccy: libclang unavailable ({e}); falling back to heuristic extractor");
+            eprintln!("docify: libclang unavailable ({e}); falling back to heuristic extractor");
             return crate::extract::extract_file_heuristic(path);
         }
     };
@@ -48,7 +48,7 @@ pub fn extract_file_clang(path: &Path) -> Vec<DocItem> {
     let tu = match index.parser(path).arguments(lang_args).parse() {
         Ok(tu) => tu,
         Err(e) => {
-            eprintln!("doccy: clang parse error for {}: {e:?}", path.display());
+            eprintln!("docify: clang parse error for {}: {e:?}", path.display());
             return Vec::new();
         }
     };

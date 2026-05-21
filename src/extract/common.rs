@@ -82,7 +82,9 @@ pub(crate) fn parse_tag_start(line: &str) -> Option<(TagKind, Option<String>, Ve
     };
     let rem = rem.to_string();
 
-    if tag.len() < 2 || !tag.chars().all(|c| c.is_ascii_alphabetic()) {
+    // Reject single-char escapes (\n, \t, \0, …) and tags that don't start with a letter.
+    // Allow brackets/commas so Doxygen's @param[in], @param[out], @param[in,out] pass through.
+    if tag.len() < 2 || !tag.chars().next().map(|c| c.is_ascii_alphabetic()).unwrap_or(false) {
         return None;
     }
 
@@ -92,14 +94,26 @@ pub(crate) fn parse_tag_start(line: &str) -> Option<(TagKind, Option<String>, Ve
             let (pname, pdesc) = split_first_word(&rem);
             Some((TagKind::Param, Some(pname), vec![pdesc]))
         }
-        "return" | "returns" | "retval" => Some((TagKind::Return, None, vec![rem])),
+        // Template parameter — same structure as @param but kept distinguishable.
+        "tparam" => {
+            let (pname, pdesc) = split_first_word(&rem);
+            Some((TagKind::Other("tparam".to_string()), Some(pname), vec![pdesc]))
+        }
+        "return" | "returns" => Some((TagKind::Return, None, vec![rem])),
+        // @retval <value> <desc> — value name embedded in label like @throws.
+        "retval" => {
+            let (val, desc) = split_first_word(&rem);
+            let label = if val.is_empty() { "retval".into() } else { format!("retval {val}") };
+            Some((TagKind::Other(label), None, vec![desc]))
+        }
         "note"                          => Some((TagKind::Note,   None, vec![rem])),
         "see" | "sa"                    => Some((TagKind::See,    None, vec![rem])),
         "since"                         => Some((TagKind::Since,  None, vec![rem])),
         "deprecated"                    => Some((TagKind::Deprecated, None, vec![rem])),
         "example" | "code" | "endcode" => Some((TagKind::Example, None, vec![rem])),
         "warning" | "warn"              => Some((TagKind::Warning, None, vec![rem])),
-        "throws" | "exception" => {
+        // @throw (singular) is identical to @throws / @exception.
+        "throw" | "throws" | "exception" => {
             let (exc, desc) = split_first_word(&rem);
             let label = if exc.is_empty() { "throws".into() } else { format!("throws {exc}") };
             Some((TagKind::Other(label), None, vec![desc]))

@@ -7,6 +7,15 @@ pub(super) fn extract_go(src: &str, file: &Path) -> Vec<DocItem> {
     let mut items = Vec::new();
     let mut i = 0;
 
+    // Pre-scan for the package declaration so we can qualify all names.
+    let pkg_name: String = lines.iter()
+        .find_map(|l| {
+            let rest = l.trim().strip_prefix("package ")?;
+            let name = first_ident(rest);
+            if !name.is_empty() { Some(name) } else { None }
+        })
+        .unwrap_or_default();
+
     while i < lines.len() {
         let t = lines[i].trim();
 
@@ -17,7 +26,13 @@ pub(super) fn extract_go(src: &str, file: &Path) -> Vec<DocItem> {
             let sym = lines.get(end + 1).map(|l| l.trim()).unwrap_or("");
             let (name, kind) = detect_go_symbol(sym);
             if kind != DocKind::Unknown {
-                let item = build_item(block, name, kind, file, i + 1, DocLanguage::Go, sym.to_string());
+                // Qualify with the package name; skip for the package declaration itself.
+                let qualified = if !pkg_name.is_empty() && kind != DocKind::Module && !name.is_empty() {
+                    format!("{pkg_name}.{name}")
+                } else {
+                    name
+                };
+                let item = build_item(block, qualified, kind, file, i + 1, DocLanguage::Go, sym.to_string());
                 if item_has_content(&item) { items.push(item); }
                 i = end + 1;
                 continue;

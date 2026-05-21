@@ -2,15 +2,16 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 
-use doccy::agent::{
+use docify::agent::{
     all_symbols, extract_source, find_symbol, search_symbols, ContextJson, OutlineItem, SymbolJson,
 };
-use doccy::extract::{extract_dir, DocSet};
-use doccy::render;
+use docify::extract::{extract_dir, DocSet};
+use docify::render;
+use docify::tui::run_doc_browser;
 
 /// Multi-language doc comment extractor.
 #[derive(Parser)]
-#[command(name = "doccy", version)]
+#[command(name = "docify", version)]
 struct Cli {
     #[command(subcommand)]
     command: Option<Cmd>,
@@ -87,6 +88,13 @@ enum Cmd {
         #[arg(value_name = "DIR")]
         dirs: Vec<PathBuf>,
     },
+
+    /// Browse documentation interactively
+    Browse {
+        /// Source directories to scan (default: current directory)
+        #[arg(value_name = "DIR")]
+        dirs: Vec<PathBuf>,
+    },
 }
 
 fn main() {
@@ -103,6 +111,7 @@ fn main() {
         Cmd::Context { name, dirs, max_lines }   => cmd_context(&name, dirs, max_lines),
         Cmd::Search { query, dirs }              => cmd_search(&query, dirs),
         Cmd::Outline { dirs }                    => cmd_outline(dirs),
+        Cmd::Browse { dirs }                     => cmd_browse(dirs),
     }
 }
 
@@ -250,6 +259,17 @@ fn cmd_outline(raw_dirs: Vec<PathBuf>) {
         .collect();
 
     println!("{}", serde_json::to_string_pretty(&outline).unwrap());
+}
+
+// ── browse ────────────────────────────────────────────────────────────────────
+
+fn cmd_browse(raw_dirs: Vec<PathBuf>) {
+    let dirs = resolve_dirs(raw_dirs);
+    let dir_refs: Vec<&std::path::Path> = dirs.iter().map(|p| p.as_path()).collect();
+    if let Err(e) = run_doc_browser(&dir_refs) {
+        eprintln!("error: {e}");
+        std::process::exit(1);
+    }
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────

@@ -1,83 +1,107 @@
-# freight-doc
+# docify
 
-Multi-language doc comment extractor and Markdown renderer. Ships as both a library (`freight_doc`) and a standalone CLI (`freight-doc`).
+Multi-language doc comment extractor and Markdown renderer. Reads doc comments from source files and writes structured GFM documentation — or serves them over a terminal browser.
 
 ## Supported languages
 
 | Language | Comment styles | Tag format |
-|----------|---------------|------------|
-| C / C++ | `/** */`, `/*! */`, `///` | Doxygen `@param` / `@return` / `@brief` |
+|---|---|---|
+| C / C++ | `/** */`, `/*! */`, `///` | Doxygen `@param` / `@return` / `@brief` / … |
 | Fortran | `!>` opener, `!!` continuation | FORD conventions |
-| Rust | `///`, `/** */` | Markdown prose |
+| Rust | `///`, `/** */` | Markdown prose sections |
 | D | `/++ +/`, `/** */`, `///` | DDoc |
 | Ada | `--!`, `---` | Prose |
 | Java | `/** */` | Javadoc `@param` / `@return` / `@throws` |
 | Go | `//` block immediately before declaration | Prose |
 
-Optionally use libclang for accurate C/C++ AST extraction (member functions, templates, access specifiers):
-
-```toml
-freight-doc = { version = "0.1", features = ["clang"] }
-```
-
-## CLI usage
+## CLI
 
 ```sh
 # Scan current directory, write Markdown to target/doc/
-freight-doc
+docify
 
 # Scan specific directories
-freight-doc src/ include/
+docify gen src/ include/
 
 # Preview extracted items without writing files
-freight-doc --dry-run
+docify gen --dry-run
 
 # Custom output directory
-freight-doc --out docs/api
+docify gen --out docs/api
+
+# Look up a symbol (JSON)
+docify get stats::mean src/
+
+# Print source code for a symbol
+docify source OrderStatistics src/
+
+# Symbol + doc in one response (JSON, useful for AI agents)
+docify context stats::mean src/
+
+# Search by name or description (JSON array)
+docify search "least squares" src/
+
+# Print all documented symbols as a compact JSON outline
+docify outline src/
+
+# Browse documentation interactively
+docify browse src/
 ```
 
-## Library usage
+## Library
+
+```toml
+[dependencies]
+docify = "0.1"
+```
 
 ```rust
-use freight_doc::extract::{extract_dir, DocSet};
-use freight_doc::render;
+use docify::extract::{extract_dir, DocSet};
+use docify::render;
 
 let set: DocSet = extract_dir(std::path::Path::new("src/"));
 render(&set, std::path::Path::new("target/doc/"))?;
 ```
 
-### Custom language extractors
+## Namespace and package qualification
 
-Implement `DocExtractor` to add support for languages not built in:
+Extracted items are qualified with their enclosing scope:
 
-```rust
-use freight_doc::extract::{DocExtractor, DocItem, extract_dir_with};
+- **C++** — `stats::mean`, `stats::algo::sort_n`
+- **Rust** — `geometry::Vec2::normalise`
+- **Go** — `geom.Add`
+- **Ada** — `Matrix.Mul`
+- **D** — `parser.tokenise`
 
-struct PythonExtractor;
+C++ Doxygen groups (`@defgroup` / `@addtogroup` / `@{` / `@}`) are also tracked; items belong to both their group and their namespace.
 
-impl DocExtractor for PythonExtractor {
-    fn extensions(&self) -> &[&str] { &["py"] }
-    fn extract(&self, path: &std::path::Path, source: &str) -> Vec<DocItem> {
-        // parse triple-quote docstrings …
-        vec![]
-    }
-}
+## Optional libclang backend
 
-let extras: Vec<Box<dyn DocExtractor>> = vec![Box::new(PythonExtractor)];
-let set = extract_dir_with(std::path::Path::new("src/"), &extras);
+For accurate C/C++ member extraction (class members, template parameters, access specifiers), build with the `clang` feature:
+
+```toml
+docify = { version = "0.1", features = ["clang"] }
 ```
 
-## Module overview
+Requires `libclang` on the system. Falls back to the heuristic extractor automatically if unavailable.
 
-| Path | Responsibility |
-|------|---------------|
-| `src/extract/mod.rs` | `DocExtractor` trait, entry points, language dispatch |
-| `src/extract/common.rs` | Shared helpers: `build_item`, tag parsing, block collectors |
-| `src/extract/{cpp,rust,fortran,d,ada,java,go}.rs` | Per-language extractors |
-| `src/extract_clang.rs` | libclang AST walker (`clang` feature) |
-| `src/render_md.rs` | GFM Markdown output with per-namespace / per-class pages |
-| `src/markdown.rs` | Math protection (`$…$`, `$$…$$`) and Markdown utilities |
-| `src/main.rs` | `freight-doc` CLI |
+## Math support
+
+LaTeX math in doc bodies — `$...$`, `$$...$$`, `\(...\)`, `\[...\]` — is preserved verbatim in Markdown and JSON output. The TUI browser (`docify browse`) converts it to Unicode symbols (Greek letters, ∑ ∫ √ ≤ ≥ ×, super/subscripts).
+
+## Output structure
+
+`docify gen` writes:
+
+```
+target/doc/
+  index.md          — overview + namespace/module listing
+  symbols.md        — alphabetical symbol index
+  namespace/        — one page per C++ namespace or Rust mod
+  class/            — one page per class or struct
+  module/           — one page per Fortran MODULE
+  group/            — one page per Doxygen @defgroup group
+```
 
 ## License
 

@@ -198,7 +198,7 @@ fn cmd_source(name: &str, raw_dirs: Vec<PathBuf>, max_lines: usize) {
                 eprintln!("error: could not read source for '{name}'");
                 std::process::exit(1);
             }
-            println!("// {}:{}", item.file.display(), item.line);
+            println!("{}:{}", item.file.display(), item.line);
             println!("{src}");
         }
         None => {

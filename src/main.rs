@@ -120,7 +120,7 @@ fn main() {
 fn cmd_gen(raw_dirs: Vec<PathBuf>, out: PathBuf, dry_run: bool) {
     let scan_dirs = resolve_dirs(raw_dirs);
     let mut all_items = Vec::new();
-    let source_root = scan_dirs[0].clone();
+    let source_root = common_ancestor(&scan_dirs);
 
     for dir in &scan_dirs {
         if !dir.is_dir() {
@@ -280,4 +280,15 @@ fn resolve_dirs(dirs: Vec<PathBuf>) -> Vec<PathBuf> {
     } else {
         dirs
     }
+}
+
+fn common_ancestor(dirs: &[PathBuf]) -> PathBuf {
+    if dirs.len() == 1 {
+        return dirs[0].clone();
+    }
+    let mut components: Vec<&std::path::Path> = dirs[0].ancestors().collect();
+    for dir in &dirs[1..] {
+        components.retain(|&ancestor| dir.starts_with(ancestor));
+    }
+    components.first().map(|p| p.to_path_buf()).unwrap_or_else(|| dirs[0].clone())
 }

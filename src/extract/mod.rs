@@ -133,6 +133,222 @@ pub struct DocItem {
     pub meta: DocMeta,
 }
 
+impl DocItem {
+    /// Signature formatted for display: `fn name(params) -> ReturnType`.
+    /// Falls back to the raw signature (minus trailing `{`) if parsing fails.
+    pub fn display_signature(&self) -> String {
+        if self.signature.is_empty() { return String::new(); }
+        match (&self.lang, &self.kind) {
+            (DocLanguage::C | DocLanguage::Cpp | DocLanguage::Java | DocLanguage::D,
+             DocKind::Function) => sig_c_style(&self.signature).unwrap_or_else(|| sig_clean(&self.signature)),
+            (DocLanguage::Rust, DocKind::Function) => sig_rust(&self.signature),
+            (DocLanguage::Go,   DocKind::Function) => sig_go(&self.signature).unwrap_or_else(|| sig_clean(&self.signature)),
+            (DocLanguage::Ada,  DocKind::Function | DocKind::Subroutine) => sig_ada(&self.signature),
+            (DocLanguage::Fortran, DocKind::Function | DocKind::Subroutine) => sig_fortran(&self.signature),
+            _ => sig_clean(&self.signature),
+        }
+    }
+}
+
+fn sig_clean(raw: &str) -> String {
+    raw.trim().trim_end_matches(';').trim_end_matches('{').trim().to_string()
+}
+
+fn sig_c_style(raw: &str) -> Option<String> {
+    let s = sig_clean(raw);
+    let s = strip_c_fn_quals(&s);
+
+    // Find the opening paren of the parameter list.
+    let paren = s.find('(')?;
+    let before = s[..paren].trim_end();
+
+    // Walk backwards to find where the function name starts.
+    let name_start = before
+        .rfind(|c: char| !c.is_alphanumeric() && c != '_' && c != '~')
+        .map(|i| i + 1)
+        .unwrap_or(0);
+    let name = &before[name_start..];
+    if name.is_empty() { return None; }
+
+    let ret = before[..name_start].trim();
+
+    // Find the matching close paren using depth counting.
+    let params_end = find_close(&s[paren..])?;
+    let params = s[paren + 1..paren + params_end].trim();
+
+    if ret.is_empty() || ret == "void" {
+        Some(format!("fn {}({})", name, params))
+    } else {
+        Some(format!("fn {}({}) -> {}", name, params, ret))
+    }
+}
+
+fn sig_rust(raw: &str) -> String {
+    // Strip the body: everything from the first `{` onwards.
+    let s = match raw.find('{') {
+        Some(i) => raw[..i].trim_end(),
+        None    => raw.trim_end_matches(';').trim(),
+    };
+    // Strip visibility prefix: pub / pub(…)
+    let s = if let Some(r) = s.strip_prefix("pub") {
+        let r = r.trim_start();
+        if r.starts_with('(') {
+            match r.find(')') {
+                Some(i) => r[i + 1..].trim_start(),
+                None    => s,
+            }
+        } else { r }
+    } else { s };
+    // Strip async / unsafe / extern "…" / default
+    let mut s = s;
+    'outer: loop {
+        for kw in &["async ", "unsafe ", "default "] {
+            if let Some(r) = s.strip_prefix(kw) { s = r.trim_start(); continue 'outer; }
+        }
+        if s.starts_with("extern ") {
+            let r = s["extern ".len()..].trim_start();
+            if r.starts_with('"') {
+                if let Some(end) = r[1..].find('"') { s = r[end + 2..].trim_start(); continue 'outer; }
+            }
+        }
+        break;
+    }
+    s.to_string()
+}
+
+fn sig_go(raw: &str) -> Option<String> {
+    // Strip body brace.
+    let s = match raw.find('{') {
+        Some(i) => raw[..i].trim_end(),
+        None    => raw.trim(),
+    };
+    let s = s.strip_prefix("func ")?.trim_start();
+
+    // Optional receiver: starts with `(`
+    let (receiver, s) = if s.starts_with('(') {
+        let close = find_close(s)?;
+        (Some(&s[..=close]), s[close + 1..].trim_start())
+    } else {
+        (None, s)
+    };
+
+    // Function name
+    let name_end = s.find(|c: char| !c.is_alphanumeric() && c != '_').unwrap_or(s.len());
+    let name = &s[..name_end];
+    let after = s[name_end..].trim_start();
+
+    if !after.starts_with('(') { return None; }
+    let close = find_close(after)?;
+    let params = after[1..close].trim();
+    let ret = after[close + 1..].trim();
+
+    let display_name = match receiver {
+        Some(r) => format!("{} {}", r, name),
+        None    => name.to_string(),
+    };
+    if ret.is_empty() {
+        Some(format!("fn {}({})", display_name, params))
+    } else {
+        Some(format!("fn {}({}) -> {}", display_name, params, ret))
+    }
+}
+
+fn sig_ada(raw: &str) -> String {
+    let s = raw.trim().trim_end_matches(';').trim();
+    let up = s.to_ascii_uppercase();
+    let (is_fn, kw_len) = if up.starts_with("FUNCTION ")   { (true,  9) }
+                          else if up.starts_with("PROCEDURE ") { (false, 10) }
+                          else { return sig_clean(raw); };
+    let rest = s[kw_len..].trim();
+    if is_fn {
+        let up_rest = rest.to_ascii_uppercase();
+        if let Some(pos) = up_rest.rfind(" RETURN ") {
+            let before = rest[..pos].trim();
+            let ret    = rest[pos + 8..].trim();
+            return format!("fn {} -> {}", before, ret);
+        }
+    }
+    format!("fn {}", rest)
+}
+
+fn sig_fortran(raw: &str) -> String {
+    let s = raw.trim();
+    let up = s.to_ascii_uppercase();
+
+    // Strip leading pure / elemental / recursive / impure
+    let mut offset = 0;
+    'attrs: loop {
+        let rest = up[offset..].trim_start();
+        let skipped = up.len() - offset - rest.len();
+        for attr in &["PURE ", "ELEMENTAL ", "RECURSIVE ", "IMPURE "] {
+            if rest.starts_with(attr) { offset += skipped + attr.len(); continue 'attrs; }
+        }
+        break;
+    }
+    let s = s[offset..].trim_start();
+    let up = s.to_ascii_uppercase();
+
+    // Optional inline return type before FUNCTION keyword.
+    let (ret, fn_rest) = if up.starts_with("FUNCTION ") {
+        (None, &s["FUNCTION ".len()..])
+    } else if up.starts_with("SUBROUTINE ") {
+        (None, &s["SUBROUTINE ".len()..])
+    } else if let Some(pos) = up.find(" FUNCTION ") {
+        (Some(s[..pos].trim()), s[pos + " FUNCTION ".len()..].trim_start())
+    } else {
+        return sig_clean(raw);
+    };
+
+    // Strip trailing RESULT(…)
+    let fn_rest = {
+        let up_fr = fn_rest.to_ascii_uppercase();
+        if let Some(p) = up_fr.find(" RESULT(") { fn_rest[..p].trim() } else { fn_rest.trim() }
+    };
+
+    match ret {
+        Some(t) if !t.is_empty() => format!("fn {} -> {}", fn_rest, t),
+        _                        => format!("fn {}", fn_rest),
+    }
+}
+
+/// Find the index of the closing character matching the first char of `s`
+/// (which must be `(`, `[`, or `{`), respecting depth.
+fn find_close(s: &str) -> Option<usize> {
+    let mut chars = s.chars();
+    let open  = chars.next()?;
+    let close = match open { '(' => ')', '[' => ']', '{' => '}', _ => return None };
+    let mut depth = 1usize;
+    let mut i = open.len_utf8();
+    for c in chars {
+        if c == open  { depth += 1; }
+        else if c == close {
+            depth -= 1;
+            if depth == 0 { return Some(i); }
+        }
+        i += c.len_utf8();
+    }
+    None
+}
+
+fn strip_c_fn_quals(s: &str) -> &str {
+    const QUALS: &[&str] = &[
+        "public ", "private ", "protected ",
+        "static ", "inline ", "extern ", "explicit ", "virtual ",
+        "constexpr ", "consteval ", "constinit ", "abstract ",
+        "synchronized ", "native ", "default ",
+        "__inline ", "__inline__ ", "__forceinline ",
+        "[[nodiscard]] ", "[[maybe_unused]] ",
+    ];
+    let mut t = s;
+    'outer: loop {
+        for q in QUALS {
+            if let Some(r) = t.strip_prefix(q) { t = r.trim_start(); continue 'outer; }
+        }
+        break;
+    }
+    t
+}
+
 pub struct DocSet {
     pub items: Vec<DocItem>,
     pub source_root: PathBuf,

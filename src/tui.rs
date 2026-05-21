@@ -412,8 +412,8 @@ fn render_detail(f: &mut Frame, app: &mut App, area: Rect) {
 
     // Signature
     if !item.signature.is_empty() {
-        let sig = item.signature.trim_end_matches('{').trim_end();
-        for l in word_wrap(sig, width) {
+        let sig = item.display_signature();
+        for l in word_wrap(&sig, width) {
             lines.push(Line::styled(l, Style::default().fg(Color::Rgb(150, 200, 150))));
         }
         lines.push(Line::raw(""));

@@ -344,7 +344,7 @@ fn render_namespace_page(
         for item in &fns {
             let anchor = item_anchor_simple(item);
             let simple = item.name.rfind("::").map(|p| &item.name[p+2..]).unwrap_or(&item.name);
-            let sig = if item.signature.is_empty() { simple } else { item.signature.trim_end_matches('{').trim() };
+            let sig = if item.signature.is_empty() { simple.to_string() } else { item.display_signature() };
             let brief = md_table_escape(if item.brief.is_empty() { "—" } else { &item.brief });
             let _ = writeln!(md, "| [`{sig}`](#{anchor}) | {brief} |");
         }
@@ -424,7 +424,7 @@ fn render_class_page(
         for item in &pub_fns {
             let anchor = item_anchor_simple(item);
             let simple_name = item.name.rfind("::").map(|p| &item.name[p+2..]).unwrap_or(&item.name);
-            let sig = if item.signature.is_empty() { simple_name } else { item.signature.trim_end_matches('{').trim() };
+            let sig = if item.signature.is_empty() { simple_name.to_string() } else { item.display_signature() };
             let brief = md_table_escape(if item.brief.is_empty() { "—" } else { &item.brief });
             let _ = writeln!(md, "| [`{sig}`](#{anchor}) | {brief} |");
         }
@@ -565,8 +565,7 @@ fn render_group_page(
         md.push_str("| Signature | Summary |\n|-----------|---------|\n");
         for item in &fns {
             let anchor = item_anchor_simple(item);
-            let sig    = if item.signature.is_empty() { item.name.as_str() }
-                         else { item.signature.trim_end_matches('{').trim() };
+            let sig    = if item.signature.is_empty() { item.name.clone() } else { item.display_signature() };
             let brief  = md_table_escape(if item.brief.is_empty() { "—" } else { &item.brief });
             let _ = writeln!(md, "| [`{sig}`](#{anchor}) | {brief} |");
         }
@@ -778,8 +777,7 @@ fn render_item(
     let _ = writeln!(md);
 
     if !item.signature.is_empty() {
-        let sig = item.signature.trim_end_matches('{').trim();
-        let _ = writeln!(md, "```\n{sig}\n```\n");
+        let _ = writeln!(md, "```\n{}\n```\n", item.display_signature());
     }
 
     if !item.brief.is_empty() { let _ = writeln!(md, "{}\n", item.brief); }

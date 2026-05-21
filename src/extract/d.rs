@@ -1,7 +1,16 @@
 use std::path::Path;
-use super::{DocItem, DocKind, DocLanguage};
+use super::{DocExtractor, DocItem, DocKind, DocLanguage};
 use super::common::{build_item, item_has_content, collect_c_block, collect_line_block, next_non_blank, first_ident};
 use super::cpp::detect_c_symbol;
+
+pub struct DExtractor;
+
+impl DocExtractor for DExtractor {
+    fn extensions(&self) -> &[&str] { &["d"] }
+    fn extract(&self, path: &Path, src: &str) -> Vec<DocItem> {
+        extract_d(src, path)
+    }
+}
 
 pub(super) fn extract_d(src: &str, file: &Path) -> Vec<DocItem> {
     let lines: Vec<&str> = src.lines().collect();

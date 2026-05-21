@@ -1,10 +1,29 @@
 use std::path::Path;
-use super::{DocItem, DocKind, DocLanguage, TagKind};
+use super::{DocExtractor, DocItem, DocKind, DocLanguage, TagKind};
 use super::common::{
     build_item, item_has_content,
     collect_c_block, collect_line_block, next_decl_sym,
     first_ident, func_name_before_paren,
 };
+
+pub struct CExtractor;
+pub struct CppExtractor;
+
+impl DocExtractor for CExtractor {
+    fn extensions(&self) -> &[&str] { &["c", "h"] }
+    fn extract(&self, path: &Path, src: &str) -> Vec<DocItem> {
+        extract_c_style(src, path, &DocLanguage::C)
+    }
+}
+
+impl DocExtractor for CppExtractor {
+    fn extensions(&self) -> &[&str] {
+        &["cpp", "cc", "cxx", "c++", "hpp", "hh", "hxx", "cu", "hip", "sycl", "ispc"]
+    }
+    fn extract(&self, path: &Path, src: &str) -> Vec<DocItem> {
+        extract_c_style(src, path, &DocLanguage::Cpp)
+    }
+}
 
 pub(super) fn extract_c_style(src: &str, file: &Path, lang: &DocLanguage) -> Vec<DocItem> {
     let lines: Vec<&str> = src.lines().collect();

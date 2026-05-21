@@ -1,6 +1,15 @@
 use std::path::Path;
-use super::{DocItem, DocKind, DocLanguage};
+use super::{DocExtractor, DocItem, DocKind, DocLanguage};
 use super::common::{build_item, item_has_content, collect_c_block, next_decl_sym, first_ident, func_name_before_paren};
+
+pub struct JavaExtractor;
+
+impl DocExtractor for JavaExtractor {
+    fn extensions(&self) -> &[&str] { &["java"] }
+    fn extract(&self, path: &Path, src: &str) -> Vec<DocItem> {
+        extract_java(src, path)
+    }
+}
 
 pub(super) fn extract_java(src: &str, file: &Path) -> Vec<DocItem> {
     let lines: Vec<&str> = src.lines().collect();

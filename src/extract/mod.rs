@@ -147,7 +147,7 @@ impl DocSet {
 /// Trait for pluggable per-language doc-comment extractors.
 ///
 /// Implement this to add support for a new language without modifying
-/// the core dispatch logic. Register instances with [`extract_dir_with`].
+/// the core dispatch logic. Register instances with [`ExtractorRegistry`].
 pub trait DocExtractor: Send + Sync {
     /// File extensions handled by this extractor (without the leading dot).
     fn extensions(&self) -> &[&str];
@@ -155,9 +155,9 @@ pub trait DocExtractor: Send + Sync {
     fn extract(&self, path: &Path, source: &str) -> Vec<DocItem>;
 }
 
-// ── Language detection ────────────────────────────────────────────────────────
+// ── Language detection (crate-internal) ──────────────────────────────────────
 
-pub fn lang_from_ext(ext: &str) -> DocLanguage {
+pub(crate) fn lang_from_ext(ext: &str) -> DocLanguage {
     match ext {
         "c" | "h" => DocLanguage::C,
         "cpp" | "cc" | "cxx" | "c++" | "hpp" | "hh" | "hxx"
@@ -172,51 +172,99 @@ pub fn lang_from_ext(ext: &str) -> DocLanguage {
     }
 }
 
+// ── Registry ──────────────────────────────────────────────────────────────────
+
+/// Ordered list of [`DocExtractor`] implementations.
+///
+/// The first extractor whose [`DocExtractor::extensions`] list contains the
+/// file extension wins. Built-in extractors are pre-registered; custom ones
+/// can be appended with [`ExtractorRegistry::register`].
+pub struct ExtractorRegistry {
+    extractors: Vec<Box<dyn DocExtractor>>,
+}
+
+impl ExtractorRegistry {
+    pub fn new() -> Self {
+        Self { extractors: Vec::new() }
+    }
+
+    /// Register an additional extractor (appended after the built-ins).
+    pub fn register(&mut self, extractor: Box<dyn DocExtractor>) {
+        self.extractors.push(extractor);
+    }
+
+    /// Return the first extractor that handles `ext`, or `None`.
+    pub fn find(&self, ext: &str) -> Option<&dyn DocExtractor> {
+        self.extractors.iter()
+            .find(|e| e.extensions().contains(&ext))
+            .map(|e| e.as_ref())
+    }
+
+    /// Extract items from a single file using this registry.
+    pub fn extract_file(&self, path: &Path) -> Vec<DocItem> {
+        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+        let Some(extractor) = self.find(ext) else { return vec![]; };
+        let Ok(src) = std::fs::read_to_string(path) else { return vec![]; };
+        extractor.extract(path, &src)
+    }
+}
+
+impl Default for ExtractorRegistry {
+    fn default() -> Self {
+        let mut r = Self::new();
+        r.register(Box::new(cpp::CExtractor));
+        r.register(Box::new(cpp::CppExtractor));
+        r.register(Box::new(rust::RustExtractor));
+        r.register(Box::new(fortran::FortranExtractor));
+        r.register(Box::new(d::DExtractor));
+        r.register(Box::new(ada::AdaExtractor));
+        r.register(Box::new(java::JavaExtractor));
+        r.register(Box::new(go::GoExtractor));
+        r
+    }
+}
+
 // ── Entry points ──────────────────────────────────────────────────────────────
 
 pub fn extract_file(path: &Path) -> Vec<DocItem> {
-    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-    let lang = lang_from_ext(ext);
-    if lang == DocLanguage::Unknown { return vec![]; }
     #[cfg(feature = "clang")]
-    if matches!(lang, DocLanguage::C | DocLanguage::Cpp) {
-        return crate::extract_clang::extract_file_clang(path);
+    {
+        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+        if matches!(lang_from_ext(ext), DocLanguage::C | DocLanguage::Cpp) {
+            return crate::extract_clang::extract_file_clang(path);
+        }
     }
-    extract_file_heuristic(path)
+    ExtractorRegistry::default().extract_file(path)
 }
 
 /// Heuristic extractor used as a fallback when libclang is unavailable.
 pub(crate) fn extract_file_heuristic(path: &Path) -> Vec<DocItem> {
-    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-    let lang = lang_from_ext(ext);
-    if lang == DocLanguage::Unknown { return vec![]; }
-    let Ok(src) = std::fs::read_to_string(path) else { return vec![]; };
-    from_str(&src, path, &lang)
+    ExtractorRegistry::default().extract_file(path)
 }
 
 pub fn extract_dir(dir: &Path) -> DocSet {
-    let items = walk_and_extract(dir, &mut |path| extract_file(path));
+    let registry = ExtractorRegistry::default();
+    let items = walk_and_extract(dir, &mut |path| registry.extract_file(path));
     dedup(items, dir)
 }
 
-/// Like [`extract_dir`] but accepts additional [`DocExtractor`] implementations.
-///
-/// The built-in extractors run first; custom extractors handle any extensions
-/// not already covered.
+/// Like [`extract_dir`] but accepts additional [`DocExtractor`] implementations
+/// for extensions not covered by the built-ins.
 pub fn extract_dir_with(dir: &Path, extras: &[Box<dyn DocExtractor>]) -> DocSet {
+    let registry = ExtractorRegistry::default();
     let items = walk_and_extract(dir, &mut |path| {
         let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-        // Try custom extractors for extensions not handled natively.
-        if lang_from_ext(ext) == DocLanguage::Unknown {
-            for extractor in extras {
-                if extractor.extensions().contains(&ext) {
-                    let Ok(src) = std::fs::read_to_string(path) else { continue };
-                    return extractor.extract(path, &src);
-                }
-            }
-            return vec![];
+        if let Some(extractor) = registry.find(ext) {
+            let Ok(src) = std::fs::read_to_string(path) else { return vec![]; };
+            return extractor.extract(path, &src);
         }
-        extract_file(path)
+        for extractor in extras {
+            if extractor.extensions().contains(&ext) {
+                let Ok(src) = std::fs::read_to_string(path) else { continue };
+                return extractor.extract(path, &src);
+            }
+        }
+        vec![]
     });
     dedup(items, dir)
 }
@@ -259,18 +307,6 @@ fn dedup(items: Vec<DocItem>, source_root: &Path) -> DocSet {
     DocSet { items: deduped, source_root: source_root.to_path_buf() }
 }
 
-fn from_str(src: &str, file: &Path, lang: &DocLanguage) -> Vec<DocItem> {
-    match lang {
-        DocLanguage::C | DocLanguage::Cpp => cpp::extract_c_style(src, file, lang),
-        DocLanguage::Rust                 => rust::extract_rust(src, file),
-        DocLanguage::Fortran              => fortran::extract_fortran(src, file),
-        DocLanguage::D                    => d::extract_d(src, file),
-        DocLanguage::Ada                  => ada::extract_ada(src, file),
-        DocLanguage::Java                 => java::extract_java(src, file),
-        DocLanguage::Go                   => go::extract_go(src, file),
-        DocLanguage::Unknown              => vec![],
-    }
-}
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
@@ -280,7 +316,22 @@ mod tests {
     use std::path::Path;
 
     fn items(src: &str, lang: &DocLanguage) -> Vec<DocItem> {
-        from_str(src, Path::new("test.x"), lang)
+        let ext = match lang {
+            DocLanguage::C       => "h",
+            DocLanguage::Cpp     => "cpp",
+            DocLanguage::Rust    => "rs",
+            DocLanguage::Fortran => "f90",
+            DocLanguage::D       => "d",
+            DocLanguage::Ada     => "ads",
+            DocLanguage::Java    => "java",
+            DocLanguage::Go      => "go",
+            DocLanguage::Unknown => return vec![],
+        };
+        let path = Path::new("test").with_extension(ext);
+        let registry = ExtractorRegistry::default();
+        registry.find(ext)
+            .map(|e| e.extract(&path, src))
+            .unwrap_or_default()
     }
 
     // ── C / C++ ───────────────────────────────────────────────────────────────
@@ -605,15 +656,17 @@ void sort(int *arr, size_t len);"#;
 
     #[test]
     fn extension_routing() {
-        assert_eq!(lang_from_ext("c"),    DocLanguage::C);
-        assert_eq!(lang_from_ext("cpp"),  DocLanguage::Cpp);
-        assert_eq!(lang_from_ext("rs"),   DocLanguage::Rust);
-        assert_eq!(lang_from_ext("f90"),  DocLanguage::Fortran);
-        assert_eq!(lang_from_ext("d"),    DocLanguage::D);
-        assert_eq!(lang_from_ext("ads"),  DocLanguage::Ada);
-        assert_eq!(lang_from_ext("java"), DocLanguage::Java);
-        assert_eq!(lang_from_ext("go"),   DocLanguage::Go);
-        assert_eq!(lang_from_ext("toml"), DocLanguage::Unknown);
+        let r = ExtractorRegistry::default();
+        assert!(r.find("c").is_some());
+        assert!(r.find("h").is_some());
+        assert!(r.find("cpp").is_some());
+        assert!(r.find("rs").is_some());
+        assert!(r.find("f90").is_some());
+        assert!(r.find("d").is_some());
+        assert!(r.find("ads").is_some());
+        assert!(r.find("java").is_some());
+        assert!(r.find("go").is_some());
+        assert!(r.find("toml").is_none());
     }
 
     // ── C++ declarations ──────────────────────────────────────────────────────

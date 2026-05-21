@@ -1,6 +1,15 @@
 use std::path::Path;
-use super::{DocItem, DocKind, DocLanguage};
+use super::{DocExtractor, DocItem, DocKind, DocLanguage};
 use super::common::{build_item, item_has_content, first_ident};
+
+pub struct GoExtractor;
+
+impl DocExtractor for GoExtractor {
+    fn extensions(&self) -> &[&str] { &["go"] }
+    fn extract(&self, path: &Path, src: &str) -> Vec<DocItem> {
+        extract_go(src, path)
+    }
+}
 
 pub(super) fn extract_go(src: &str, file: &Path) -> Vec<DocItem> {
     let lines: Vec<&str> = src.lines().collect();

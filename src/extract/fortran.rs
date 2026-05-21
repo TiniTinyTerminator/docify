@@ -1,6 +1,17 @@
 use std::path::Path;
-use super::{DocItem, DocKind, DocLanguage};
+use super::{DocExtractor, DocItem, DocKind, DocLanguage};
 use super::common::{build_item, item_has_content, next_non_blank, first_ident, ci_ident_after};
+
+pub struct FortranExtractor;
+
+impl DocExtractor for FortranExtractor {
+    fn extensions(&self) -> &[&str] {
+        &["f", "f90", "f95", "f03", "f08", "F90", "for", "ftn"]
+    }
+    fn extract(&self, path: &Path, src: &str) -> Vec<DocItem> {
+        extract_fortran(src, path)
+    }
+}
 
 pub(super) fn extract_fortran(src: &str, file: &Path) -> Vec<DocItem> {
     let lines: Vec<&str> = src.lines().collect();

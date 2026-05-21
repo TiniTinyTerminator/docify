@@ -1,6 +1,15 @@
 use std::path::Path;
-use super::{DocItem, DocKind, DocLanguage};
+use super::{DocExtractor, DocItem, DocKind, DocLanguage};
 use super::common::{build_item, item_has_content, next_non_blank, ci_ident_after};
+
+pub struct AdaExtractor;
+
+impl DocExtractor for AdaExtractor {
+    fn extensions(&self) -> &[&str] { &["ads", "adb"] }
+    fn extract(&self, path: &Path, src: &str) -> Vec<DocItem> {
+        extract_ada(src, path)
+    }
+}
 
 pub(super) fn extract_ada(src: &str, file: &Path) -> Vec<DocItem> {
     let lines: Vec<&str> = src.lines().collect();

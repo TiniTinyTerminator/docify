@@ -7,9 +7,9 @@ Languages freight supports that docify does not yet extract:
 
 | Language   | Comment style           | Notes                              |
 |------------|-------------------------|------------------------------------|
-| **Zig**    | `///` doc comments      | Very similar to Rust extractor     |
-| **Swift**  | `///` and `/** */`      | PascalCase types, named params     |
-| **Kotlin** | `/** */` KDoc           | Very similar to Java extractor     |
+| ~~**Zig**~~    | ~~`///` doc comments~~  | Done in `src/extract/zig.rs`       |
+| ~~**Swift**~~  | ~~`///` and `/** */`~~  | Done in `src/extract/swift.rs`     |
+| ~~**Kotlin**~~ | ~~`/** */` KDoc~~       | Done in `src/extract/kotlin.rs`    |
 | **CUDA**   | Doxygen `/** */`        | Already falls through to Cpp; needs `__global__` / `__device__` qualifier handling |
 | **ISPC**   | C-style `/** */`        | `task`, `export`, `uniform` qualifiers |
 | **HIP**    | Doxygen `/** */`        | Same as CUDA, different builtins   |

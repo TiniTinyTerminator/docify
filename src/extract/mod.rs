@@ -9,6 +9,9 @@ mod d;
 mod ada;
 mod java;
 mod go;
+mod zig;
+mod kotlin;
+mod swift;
 
 // Re-export shared helpers for extract_clang.rs (only needed when clang feature is active)
 #[cfg(feature = "clang")]
@@ -18,7 +21,7 @@ pub(crate) use common::{build_item, item_has_content};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum DocLanguage {
-    C, Cpp, Rust, Fortran, D, Ada, Java, Go, Unknown,
+    C, Cpp, Rust, Fortran, D, Ada, Java, Go, Zig, Kotlin, Swift, Unknown,
 }
 
 impl DocLanguage {
@@ -32,6 +35,9 @@ impl DocLanguage {
             Self::Ada     => "Ada",
             Self::Java    => "Java",
             Self::Go      => "Go",
+            Self::Zig     => "Zig",
+            Self::Kotlin  => "Kotlin",
+            Self::Swift   => "Swift",
             Self::Unknown => "Unknown",
         }
     }
@@ -384,6 +390,9 @@ pub(crate) fn lang_from_ext(ext: &str) -> DocLanguage {
         "ads" | "adb" => DocLanguage::Ada,
         "java" => DocLanguage::Java,
         "go" => DocLanguage::Go,
+        "zig" => DocLanguage::Zig,
+        "kt" | "kts" => DocLanguage::Kotlin,
+        "swift" => DocLanguage::Swift,
         _ => DocLanguage::Unknown,
     }
 }
@@ -436,6 +445,9 @@ impl Default for ExtractorRegistry {
         r.register(Box::new(ada::AdaExtractor));
         r.register(Box::new(java::JavaExtractor));
         r.register(Box::new(go::GoExtractor));
+        r.register(Box::new(zig::ZigExtractor));
+        r.register(Box::new(kotlin::KotlinExtractor));
+        r.register(Box::new(swift::SwiftExtractor));
         r
     }
 }
@@ -541,6 +553,9 @@ mod tests {
             DocLanguage::Ada     => "ads",
             DocLanguage::Java    => "java",
             DocLanguage::Go      => "go",
+            DocLanguage::Zig     => "zig",
+            DocLanguage::Kotlin  => "kt",
+            DocLanguage::Swift   => "swift",
             DocLanguage::Unknown => return vec![],
         };
         let path = Path::new("test").with_extension(ext);
@@ -882,6 +897,10 @@ void sort(int *arr, size_t len);"#;
         assert!(r.find("ads").is_some());
         assert!(r.find("java").is_some());
         assert!(r.find("go").is_some());
+        assert!(r.find("zig").is_some());
+        assert!(r.find("kt").is_some());
+        assert!(r.find("kts").is_some());
+        assert!(r.find("swift").is_some());
         assert!(r.find("toml").is_none());
     }
 

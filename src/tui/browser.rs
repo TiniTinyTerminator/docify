@@ -1,12 +1,7 @@
 use std::path::Path;
 
-use crossterm::{
-    event::{
-        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers,
-        MouseButton, MouseEventKind,
-    },
-    execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+use crossterm::event::{
+    self, Event, KeyCode, KeyModifiers, MouseButton, MouseEventKind,
 };
 use ratatui::{
     backend::CrosstermBackend,
@@ -19,6 +14,11 @@ use ratatui::{
 
 use crate::agent::extract_source;
 use crate::extract::{DocItem, DocKind, TagKind};
+
+use super::common::{
+    enter_tui, highlight_style, leave_tui, render_hint_bar, render_search_bar, truncate, word_wrap,
+    COLOR_BORDER, COLOR_CONTENT, COLOR_HINT, COLOR_SECTION, COLOR_TITLE,
+};
 
 // ── App state ─────────────────────────────────────────────────────────────────
 
@@ -52,7 +52,9 @@ impl App {
             source_cache: None,
             list_area: Rect::default(),
         };
-        if n > 0 { app.list_state.select(Some(0)); }
+        if n > 0 {
+            app.list_state.select(Some(0));
+        }
         app
     }
 
@@ -69,9 +71,11 @@ impl App {
                 })
                 .collect();
         }
-        let sel = self.list_state.selected().unwrap_or(0).min(
-            self.filtered.len().saturating_sub(1)
-        );
+        let sel = self
+            .list_state
+            .selected()
+            .unwrap_or(0)
+            .min(self.filtered.len().saturating_sub(1));
         if self.filtered.is_empty() {
             self.list_state.select(None);
         } else {
@@ -94,7 +98,9 @@ impl App {
     }
 
     fn select(&mut self, pos: usize) {
-        if self.filtered.is_empty() { return; }
+        if self.filtered.is_empty() {
+            return;
+        }
         let pos = pos.min(self.filtered.len() - 1);
         self.list_state.select(Some(pos));
         self.scroll = 0;
@@ -103,7 +109,9 @@ impl App {
 
     fn move_up(&mut self) {
         let cur = self.list_state.selected().unwrap_or(0);
-        if cur > 0 { self.select(cur - 1); }
+        if cur > 0 {
+            self.select(cur - 1);
+        }
     }
 
     fn move_down(&mut self) {
@@ -112,7 +120,9 @@ impl App {
     }
 
     fn source_text(&mut self) -> &str {
-        let Some(idx) = self.selected_idx() else { return ""; };
+        let Some(idx) = self.selected_idx() else {
+            return "";
+        };
         if self.source_cache.as_ref().map(|(i, _)| *i) == Some(idx) {
             return &self.source_cache.as_ref().unwrap().1;
         }
@@ -130,17 +140,9 @@ pub fn run_doc_browser(dirs: &[&Path]) -> anyhow::Result<()> {
         all_items.extend(crate::extract::extract_dir(dir).items);
     }
 
-    enable_raw_mode()?;
-    let mut stdout = std::io::stdout();
-    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
-    let backend = CrosstermBackend::new(stdout);
-    let mut terminal = Terminal::new(backend)?;
-
+    let mut terminal = enter_tui()?;
     let result = run_loop(&mut terminal, all_items);
-
-    disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen, DisableMouseCapture)?;
-    terminal.show_cursor()?;
+    leave_tui(&mut terminal)?;
 
     result
 }
@@ -159,28 +161,21 @@ fn run_loop(
         if event::poll(std::time::Duration::from_millis(50))? {
             match event::read()? {
                 Event::Key(key) => match (key.code, key.modifiers) {
-                    (KeyCode::Esc, _) | (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
-                        return Ok(());
-                    }
-                    (KeyCode::Char('q'), KeyModifiers::NONE) => {
-                        return Ok(());
-                    }
-                    (KeyCode::Up, _) | (KeyCode::Char('k'), KeyModifiers::NONE) => {
-                        app.move_up();
-                    }
+                    (KeyCode::Esc, _)
+                    | (KeyCode::Char('c'), KeyModifiers::CONTROL)
+                    | (KeyCode::Char('q'), KeyModifiers::NONE) => return Ok(()),
+
+                    (KeyCode::Up, _) | (KeyCode::Char('k'), KeyModifiers::NONE) => app.move_up(),
                     (KeyCode::Down, _) | (KeyCode::Char('j'), KeyModifiers::NONE) => {
-                        app.move_down();
+                        app.move_down()
                     }
                     (KeyCode::Tab, _) => {
                         app.show_source = !app.show_source;
                         app.scroll = 0;
                     }
-                    (KeyCode::PageUp, _) => {
-                        app.scroll = app.scroll.saturating_sub(5);
-                    }
-                    (KeyCode::PageDown, _) => {
-                        app.scroll = app.scroll.saturating_add(5);
-                    }
+                    (KeyCode::PageUp, _) => app.scroll = app.scroll.saturating_sub(5),
+                    (KeyCode::PageDown, _) => app.scroll = app.scroll.saturating_add(5),
+
                     (KeyCode::Char(c), KeyModifiers::NONE)
                     | (KeyCode::Char(c), KeyModifiers::SHIFT) => {
                         app.query.insert(app.cursor, c);
@@ -209,13 +204,13 @@ fn run_loop(
                     (KeyCode::End, _) => app.cursor = app.query.len(),
                     _ => {}
                 },
+
                 Event::Mouse(mouse) => match mouse.kind {
                     MouseEventKind::ScrollUp => app.move_up(),
                     MouseEventKind::ScrollDown => app.move_down(),
                     MouseEventKind::Down(MouseButton::Left) => {
                         let area = app.list_area;
-                        let x = mouse.column;
-                        let y = mouse.row;
+                        let (x, y) = (mouse.column, mouse.row);
                         if x >= area.x
                             && x < area.x + area.width
                             && y > area.y
@@ -241,34 +236,12 @@ fn render(f: &mut Frame, app: &mut App) {
     let area = f.area();
     let outer = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(3),
-            Constraint::Min(0),
-            Constraint::Length(1),
-        ])
+        .constraints([Constraint::Length(3), Constraint::Min(0), Constraint::Length(1)])
         .split(area);
 
-    render_search(f, app, outer[0]);
+    render_search_bar(f, " Filter symbols ", &app.query, outer[0]);
     render_body(f, app, outer[1]);
-    render_statusbar(f, app, outer[2]);
-}
-
-fn render_search(f: &mut Frame, app: &App, area: Rect) {
-    let display = format!("{}_", app.query);
-    let p = Paragraph::new(display)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::Cyan))
-                .title(Span::styled(
-                    " Filter symbols ",
-                    Style::default()
-                        .fg(Color::Cyan)
-                        .add_modifier(Modifier::BOLD),
-                )),
-        )
-        .style(Style::default().fg(Color::White));
-    f.render_widget(p, area);
+    render_status(f, app, outer[2]);
 }
 
 fn render_body(f: &mut Frame, app: &mut App, area: Rect) {
@@ -288,10 +261,11 @@ fn render_list(f: &mut Frame, app: &mut App, area: Rect) {
         .iter()
         .map(|&i| {
             let item = &app.all[i];
-            let kind_color = kind_color(&item.kind);
             let kind_chip = Span::styled(
                 format!("{:<5}", item.kind.label()),
-                Style::default().fg(kind_color).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(kind_color(&item.kind))
+                    .add_modifier(Modifier::BOLD),
             );
             let name_span = Span::styled(
                 truncate(&item.name, 30),
@@ -299,7 +273,7 @@ fn render_list(f: &mut Frame, app: &mut App, area: Rect) {
             );
             let lang_span = Span::styled(
                 format!("  {}", item.lang.label()),
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(COLOR_HINT),
             );
             ListItem::new(Line::from(vec![kind_chip, name_span, lang_span]))
         })
@@ -310,15 +284,10 @@ fn render_list(f: &mut Frame, app: &mut App, area: Rect) {
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::DarkGray))
-                .title(Span::styled(title, Style::default().fg(Color::White))),
+                .border_style(Style::default().fg(COLOR_BORDER))
+                .title(Span::styled(title, Style::default().fg(COLOR_TITLE))),
         )
-        .highlight_style(
-            Style::default()
-                .bg(Color::Rgb(30, 50, 80))
-                .fg(Color::White)
-                .add_modifier(Modifier::BOLD),
-        )
+        .highlight_style(highlight_style())
         .highlight_symbol("▶ ");
 
     f.render_stateful_widget(list, area, &mut app.list_state);
@@ -334,15 +303,15 @@ fn render_detail(f: &mut Frame, app: &mut App, area: Rect) {
 
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::DarkGray))
-        .title(Span::styled(title, Style::default().fg(Color::White)));
+        .border_style(Style::default().fg(COLOR_BORDER))
+        .title(Span::styled(title, Style::default().fg(COLOR_TITLE)));
 
     let inner = block.inner(area);
     f.render_widget(block, area);
 
     if app.filtered.is_empty() {
         let hint = Paragraph::new("No symbols match.")
-            .style(Style::default().fg(Color::DarkGray));
+            .style(Style::default().fg(COLOR_CONTENT));
         f.render_widget(hint, inner);
         return;
     }
@@ -353,27 +322,25 @@ fn render_detail(f: &mut Frame, app: &mut App, area: Rect) {
         let text = app.source_text().to_owned();
         if text.is_empty() {
             let p = Paragraph::new("Source not available.")
-                .style(Style::default().fg(Color::DarkGray));
+                .style(Style::default().fg(COLOR_CONTENT));
             f.render_widget(p, inner);
         } else {
             let lines: Vec<Line> = text
                 .lines()
                 .map(|l| Line::styled(l.to_owned(), Style::default().fg(Color::Gray)))
                 .collect();
-            let p = Paragraph::new(lines).scroll((scroll, 0));
-            f.render_widget(p, inner);
+            f.render_widget(Paragraph::new(lines).scroll((scroll, 0)), inner);
         }
         return;
     }
 
-    // Doc view — build lines from selected item
     let Some(item) = app.selected_item() else { return };
     let item = item.clone();
     let width = inner.width as usize;
 
     let mut lines: Vec<Line> = Vec::new();
 
-    // Header: kind chip + name
+    // Header: kind chip + name + language
     lines.push(Line::from(vec![
         Span::styled(
             format!("[{}] ", item.kind.label()),
@@ -394,12 +361,10 @@ fn render_detail(f: &mut Frame, app: &mut App, area: Rect) {
     ]));
 
     // File + line
-    let rel_file = item.file.display().to_string();
     lines.push(Line::styled(
-        format!("{}:{}", rel_file, item.line),
-        Style::default().fg(Color::DarkGray),
+        format!("{}:{}", item.file.display(), item.line),
+        Style::default().fg(COLOR_HINT),
     ));
-
     lines.push(Line::raw(""));
 
     // Brief
@@ -412,8 +377,7 @@ fn render_detail(f: &mut Frame, app: &mut App, area: Rect) {
 
     // Signature
     if !item.signature.is_empty() {
-        let sig = item.display_signature();
-        for l in word_wrap(&sig, width) {
+        for l in word_wrap(&item.display_signature(), width) {
             lines.push(Line::styled(l, Style::default().fg(Color::Rgb(150, 200, 150))));
         }
         lines.push(Line::raw(""));
@@ -422,7 +386,7 @@ fn render_detail(f: &mut Frame, app: &mut App, area: Rect) {
     // Body (extended description)
     if !item.body.is_empty() {
         for l in word_wrap(&item.body, width) {
-            lines.push(Line::styled(l, Style::default().fg(Color::Gray)));
+            lines.push(Line::styled(l, Style::default().fg(COLOR_CONTENT)));
         }
         lines.push(Line::raw(""));
     }
@@ -430,21 +394,11 @@ fn render_detail(f: &mut Frame, app: &mut App, area: Rect) {
     // Parameters
     let params: Vec<_> = item.tags.iter().filter(|t| t.kind == TagKind::Param).collect();
     if !params.is_empty() {
-        lines.push(Line::styled(
-            "Parameters",
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        ));
+        lines.push(section_header("Parameters"));
         for p in &params {
-            let name_part = p
-                .name
-                .as_deref()
-                .map(|n| format!("{n}: "))
-                .unwrap_or_default();
-            let text = format!("  {}{}", name_part, p.text);
-            for l in word_wrap(&text, width) {
-                lines.push(Line::styled(l, Style::default().fg(Color::Gray)));
+            let name_part = p.name.as_deref().map(|n| format!("{n}: ")).unwrap_or_default();
+            for l in word_wrap(&format!("  {}{}", name_part, p.text), width) {
+                lines.push(Line::styled(l, Style::default().fg(COLOR_CONTENT)));
             }
         }
         lines.push(Line::raw(""));
@@ -453,17 +407,9 @@ fn render_detail(f: &mut Frame, app: &mut App, area: Rect) {
     // Returns
     if let Some(ret) = item.tags.iter().find(|t| t.kind == TagKind::Return) {
         if !ret.text.is_empty() {
-            lines.push(Line::styled(
-                "Returns",
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD),
-            ));
+            lines.push(section_header("Returns"));
             for l in word_wrap(&ret.text, width) {
-                lines.push(Line::styled(
-                    format!("  {l}"),
-                    Style::default().fg(Color::Gray),
-                ));
+                lines.push(Line::styled(format!("  {l}"), Style::default().fg(COLOR_CONTENT)));
             }
             lines.push(Line::raw(""));
         }
@@ -476,12 +422,7 @@ fn render_detail(f: &mut Frame, app: &mut App, area: Rect) {
         .filter(|t| matches!(&t.kind, TagKind::Other(s) if s.starts_with("throws")))
         .collect();
     if !throws.is_empty() {
-        lines.push(Line::styled(
-            "Throws",
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        ));
+        lines.push(section_header("Throws"));
         for t in &throws {
             let exc = match &t.kind {
                 TagKind::Other(s) => s.trim_start_matches("throws").trim().to_owned(),
@@ -499,17 +440,9 @@ fn render_detail(f: &mut Frame, app: &mut App, area: Rect) {
 
     // Notes
     for tag in item.tags.iter().filter(|t| t.kind == TagKind::Note) {
-        lines.push(Line::styled(
-            "Note",
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        ));
+        lines.push(section_header("Note"));
         for l in word_wrap(&tag.text, width) {
-            lines.push(Line::styled(
-                format!("  {l}"),
-                Style::default().fg(Color::Gray),
-            ));
+            lines.push(Line::styled(format!("  {l}"), Style::default().fg(COLOR_CONTENT)));
         }
         lines.push(Line::raw(""));
     }
@@ -518,12 +451,7 @@ fn render_detail(f: &mut Frame, app: &mut App, area: Rect) {
     for tag in item.tags.iter().filter(|t| t.kind == TagKind::See) {
         if !tag.text.is_empty() {
             lines.push(Line::from(vec![
-                Span::styled(
-                    "See also  ",
-                    Style::default()
-                        .fg(Color::Yellow)
-                        .add_modifier(Modifier::BOLD),
-                ),
+                Span::styled("See also  ", Style::default().fg(COLOR_SECTION).add_modifier(Modifier::BOLD)),
                 Span::styled(tag.text.clone(), Style::default().fg(Color::Cyan)),
             ]));
             lines.push(Line::raw(""));
@@ -535,97 +463,60 @@ fn render_detail(f: &mut Frame, app: &mut App, area: Rect) {
         match &tag.kind {
             TagKind::Param | TagKind::Return | TagKind::Note | TagKind::See | TagKind::Brief => {}
             TagKind::Other(s) if s.starts_with("throws") => {}
-            TagKind::Other(_) | TagKind::Warning | TagKind::Deprecated | TagKind::Since | TagKind::Example => {
-                lines.push(Line::styled(
-                    tag.kind.label().to_owned(),
-                    Style::default()
-                        .fg(Color::Yellow)
-                        .add_modifier(Modifier::BOLD),
-                ));
+            TagKind::Other(_)
+            | TagKind::Warning
+            | TagKind::Deprecated
+            | TagKind::Since
+            | TagKind::Example => {
+                lines.push(section_header(tag.kind.label()));
                 for l in word_wrap(&tag.text, width) {
-                    lines.push(Line::styled(
-                        format!("  {l}"),
-                        Style::default().fg(Color::Gray),
-                    ));
+                    lines.push(Line::styled(format!("  {l}"), Style::default().fg(COLOR_CONTENT)));
                 }
                 lines.push(Line::raw(""));
             }
         }
     }
 
-    let p = Paragraph::new(lines)
-        .wrap(Wrap { trim: false })
-        .scroll((scroll, 0));
-    f.render_widget(p, inner);
+    f.render_widget(
+        Paragraph::new(lines).wrap(Wrap { trim: false }).scroll((scroll, 0)),
+        inner,
+    );
 }
 
-fn render_statusbar(f: &mut Frame, app: &App, area: Rect) {
-    let content = if app.all.is_empty() {
-        Span::styled("No documented symbols found.", Style::default().fg(Color::Red))
+fn render_status(f: &mut Frame, app: &App, area: Rect) {
+    if app.all.is_empty() {
+        render_hint_bar(f, "No documented symbols found.", area);
     } else {
-        Span::styled(
+        render_hint_bar(
+            f,
             " ↑↓/jk navigate   Tab source   PgUp/PgDn scroll   type to filter   q quit",
-            Style::default().fg(Color::DarkGray),
-        )
-    };
-    f.render_widget(Paragraph::new(Line::from(content)), area);
+            area,
+        );
+    }
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+/// Colour coding by symbol kind.
 fn kind_color(kind: &DocKind) -> Color {
     match kind {
         DocKind::Function | DocKind::Subroutine => Color::Rgb(100, 180, 255),
-        DocKind::Struct | DocKind::Class => Color::Rgb(180, 140, 255),
-        DocKind::Enum => Color::Rgb(255, 180, 80),
-        DocKind::Typedef => Color::Rgb(130, 220, 180),
-        DocKind::Variable => Color::Rgb(200, 200, 100),
-        DocKind::Macro => Color::Rgb(255, 120, 120),
-        DocKind::Module | DocKind::Interface => Color::Rgb(120, 220, 200),
-        DocKind::Unknown => Color::DarkGray,
+        DocKind::Struct | DocKind::Class        => Color::Rgb(180, 140, 255),
+        DocKind::Enum                           => Color::Rgb(255, 180,  80),
+        DocKind::Typedef                        => Color::Rgb(130, 220, 180),
+        DocKind::Variable                       => Color::Rgb(200, 200, 100),
+        DocKind::Macro                          => Color::Rgb(255, 120, 120),
+        DocKind::Module | DocKind::Interface    => Color::Rgb(120, 220, 200),
+        DocKind::Unknown                        => Color::DarkGray,
     }
 }
 
-fn truncate(s: &str, max: usize) -> String {
-    if s.len() <= max {
-        s.to_owned()
-    } else {
-        format!("{}…", &s[..max.saturating_sub(1)])
-    }
-}
-
-fn word_wrap(text: &str, width: usize) -> Vec<String> {
-    if width < 4 {
-        return vec![text.to_owned()];
-    }
-    let mut result = Vec::new();
-    for para in text.split('\n') {
-        if para.is_empty() {
-            result.push(String::new());
-            continue;
-        }
-        let mut cur = String::new();
-        let indent: String = para
-            .chars()
-            .take_while(|c| c.is_whitespace())
-            .collect();
-        let effective_width = width.saturating_sub(indent.len());
-        for word in para.split_whitespace() {
-            if cur.is_empty() {
-                cur.push_str(&indent);
-                cur.push_str(word);
-            } else if cur.len() - indent.len() + 1 + word.len() <= effective_width {
-                cur.push(' ');
-                cur.push_str(word);
-            } else {
-                result.push(std::mem::take(&mut cur));
-                cur.push_str(&indent);
-                cur.push_str(word);
-            }
-        }
-        if !cur.is_empty() {
-            result.push(cur);
-        }
-    }
-    result
+/// Bold yellow section header (Parameters, Returns, …).
+fn section_header(label: &str) -> Line<'static> {
+    Line::styled(
+        label.to_owned(),
+        Style::default()
+            .fg(COLOR_SECTION)
+            .add_modifier(Modifier::BOLD),
+    )
 }

@@ -379,6 +379,7 @@ pub trait DocExtractor: Send + Sync {
 
 // ── Language detection (crate-internal) ──────────────────────────────────────
 
+#[cfg(feature = "clang")]
 pub(crate) fn lang_from_ext(ext: &str) -> DocLanguage {
     match ext {
         "c" | "h" => DocLanguage::C,
@@ -466,6 +467,7 @@ pub fn extract_file(path: &Path) -> Vec<DocItem> {
 }
 
 /// Heuristic extractor used as a fallback when libclang is unavailable.
+#[cfg(feature = "clang")]
 pub(crate) fn extract_file_heuristic(path: &Path) -> Vec<DocItem> {
     ExtractorRegistry::default().extract_file(path)
 }

@@ -19,7 +19,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
-    /// Generate Markdown documentation (default when no command given)
+    /// Generate Markdown documentation
     Gen {
         /// Source directories to scan (default: current directory)
         #[arg(value_name = "DIR")]
@@ -100,11 +100,7 @@ enum Cmd {
 fn main() {
     let cli = Cli::parse();
 
-    match cli.command.unwrap_or_else(|| Cmd::Gen {
-        dirs: vec![],
-        out: PathBuf::from("target/doc"),
-        dry_run: false,
-    }) {
+    match cli.command.unwrap_or(Cmd::Browse { dirs: vec![] }) {
         Cmd::Gen { dirs, out, dry_run } => cmd_gen(dirs, out, dry_run),
         Cmd::Get { name, dirs } => cmd_get(&name, dirs),
         Cmd::Source {

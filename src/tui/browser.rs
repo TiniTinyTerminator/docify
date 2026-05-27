@@ -1955,13 +1955,45 @@ fn find_doc_target(
     }
     all.iter()
         .enumerate()
-        .filter(|(idx, item)| Some(*idx) != current_idx && &item.lang == lang)
+        .filter(|(idx, item)| {
+            Some(*idx) != current_idx
+                && &item.lang == lang
+                && !is_class_or_constructor(item)
+        })
         .find(|(_, item)| item_matches_ref(item, needle))
         .map(|(idx, _)| idx)
 }
 
 fn item_matches_ref(item: &DocItem, needle: &str) -> bool {
     item.name == needle || simple_name(&item.name) == needle
+}
+
+/// Returns true for items that should never be used as inline reference link
+/// targets: class/struct/interface type definitions, and C++ constructors
+/// (identified by their simple name matching their parent scope name, e.g.
+/// `stats::OrderStatistics::OrderStatistics`).
+fn is_class_or_constructor(item: &DocItem) -> bool {
+    // Type definitions are structural — don't turn mentions of a class name
+    // into jump links in prose.
+    if matches!(
+        item.kind,
+        DocKind::Class | DocKind::Struct | DocKind::Interface
+    ) {
+        return true;
+    }
+    // C/C++ constructors: Function whose unqualified name equals its parent
+    // scope's unqualified name (e.g. `Foo::Foo` or `ns::Foo::Foo`).
+    if matches!(item.lang, DocLanguage::C | DocLanguage::Cpp)
+        && item.kind == DocKind::Function
+    {
+        if let Some((parent, ctor)) = item.name.rsplit_once("::") {
+            let parent_simple = simple_name(parent);
+            if parent_simple == ctor {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 fn clean_reference_name(name: &str) -> &str {

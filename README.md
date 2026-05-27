@@ -2,6 +2,8 @@
 
 Multi-language doc comment extractor and Markdown renderer. Reads doc comments from source files and writes structured GFM documentation — or serves them over a terminal browser.
 
+![docify browse TUI, search, source, and gen commands](https://raw.githubusercontent.com/TiniTinyTerminator/freight-workspace/main/tapes/freight-doc-tui.gif)
+
 ## Supported languages
 
 | Language | Comment styles | Tag format |

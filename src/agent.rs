@@ -8,18 +8,18 @@ use crate::extract::{extract_dir, DocItem, DocLanguage, TagKind};
 
 #[derive(Serialize)]
 pub struct SymbolJson {
-    pub name:      String,
-    pub kind:      &'static str,
-    pub lang:      &'static str,
-    pub file:      String,
-    pub line:      usize,
-    pub brief:     String,
+    pub name: String,
+    pub kind: &'static str,
+    pub lang: &'static str,
+    pub file: String,
+    pub line: usize,
+    pub brief: String,
     pub signature: String,
-    pub params:    Vec<ParamJson>,
-    pub returns:   String,
-    pub throws:    Vec<String>,
-    pub notes:     Vec<String>,
-    pub body:      String,
+    pub params: Vec<ParamJson>,
+    pub returns: String,
+    pub throws: Vec<String>,
+    pub notes: Vec<String>,
+    pub body: String,
 }
 
 #[derive(Serialize)]
@@ -30,17 +30,17 @@ pub struct ParamJson {
 
 #[derive(Serialize)]
 pub struct OutlineItem {
-    pub name:  String,
-    pub kind:  &'static str,
-    pub lang:  &'static str,
-    pub file:  String,
-    pub line:  usize,
+    pub name: String,
+    pub kind: &'static str,
+    pub lang: &'static str,
+    pub file: String,
+    pub line: usize,
     pub brief: String,
 }
 
 #[derive(Serialize)]
 pub struct ContextJson {
-    pub doc:    SymbolJson,
+    pub doc: SymbolJson,
     pub source: String,
 }
 
@@ -48,38 +48,49 @@ pub struct ContextJson {
 
 impl From<DocItem> for SymbolJson {
     fn from(item: DocItem) -> Self {
-        let params: Vec<ParamJson> = item.tags.iter()
+        let params: Vec<ParamJson> = item
+            .tags
+            .iter()
             .filter(|t| t.kind == TagKind::Param)
-            .map(|t| ParamJson { name: t.name.clone(), desc: t.text.clone() })
+            .map(|t| ParamJson {
+                name: t.name.clone(),
+                desc: t.text.clone(),
+            })
             .collect();
-        let returns = item.tags.iter()
+        let returns = item
+            .tags
+            .iter()
             .find(|t| t.kind == TagKind::Return)
             .map(|t| t.text.clone())
             .unwrap_or_default();
-        let throws: Vec<String> = item.tags.iter()
+        let throws: Vec<String> = item
+            .tags
+            .iter()
             .filter(|t| matches!(&t.kind, TagKind::Other(s) if s.starts_with("throws")))
-            .map(|t| t.kind.label().to_string()
-                + if t.text.is_empty() { "" } else { ": " }
-                + &t.text)
+            .map(|t| {
+                t.kind.label().to_string() + if t.text.is_empty() { "" } else { ": " } + &t.text
+            })
             .collect();
-        let notes: Vec<String> = item.tags.iter()
+        let notes: Vec<String> = item
+            .tags
+            .iter()
             .filter(|t| t.kind == TagKind::Note)
             .map(|t| t.text.clone())
             .collect();
 
         SymbolJson {
-            file:      item.file.display().to_string(),
-            kind:      item.kind.label(),
-            lang:      item.lang.label(),
-            name:      item.name,
-            line:      item.line,
-            brief:     item.brief,
+            file: item.file.display().to_string(),
+            kind: item.kind.label(),
+            lang: item.lang.label(),
+            name: item.name,
+            line: item.line,
+            brief: item.brief,
             signature: item.signature,
             params,
             returns,
             throws,
             notes,
-            body:      item.body,
+            body: item.body,
         }
     }
 }
@@ -87,11 +98,11 @@ impl From<DocItem> for SymbolJson {
 impl From<&DocItem> for OutlineItem {
     fn from(item: &DocItem) -> Self {
         OutlineItem {
-            name:  item.name.clone(),
-            kind:  item.kind.label(),
-            lang:  item.lang.label(),
-            file:  item.file.display().to_string(),
-            line:  item.line,
+            name: item.name.clone(),
+            kind: item.kind.label(),
+            lang: item.lang.label(),
+            file: item.file.display().to_string(),
+            line: item.line,
             brief: item.brief.clone(),
         }
     }
@@ -119,13 +130,16 @@ pub fn find_symbol(name: &str, dirs: &[&Path]) -> Option<DocItem> {
     }
     // 3. Case-insensitive substring
     let lower = name.to_ascii_lowercase();
-    items.into_iter().find(|i| i.name.to_ascii_lowercase().contains(&lower))
+    items
+        .into_iter()
+        .find(|i| i.name.to_ascii_lowercase().contains(&lower))
 }
 
 /// Return all items whose name or brief contains `query` (case-insensitive).
 pub fn search_symbols(query: &str, dirs: &[&Path]) -> Vec<DocItem> {
     let lower = query.to_ascii_lowercase();
-    collect(dirs).into_iter()
+    collect(dirs)
+        .into_iter()
         .filter(|i| {
             i.name.to_ascii_lowercase().contains(&lower)
                 || i.brief.to_ascii_lowercase().contains(&lower)
@@ -145,15 +159,19 @@ pub fn all_symbols(dirs: &[&Path]) -> Vec<DocItem> {
 /// Uses brace-depth tracking for C-family, Rust, Java, and Go.
 /// Falls back to an `END keyword` scan for Fortran/Ada, then to a line window.
 pub fn extract_source(item: &DocItem, max_lines: usize) -> String {
-    let Ok(text) = std::fs::read_to_string(&item.file) else { return String::new() };
+    let Ok(text) = std::fs::read_to_string(&item.file) else {
+        return String::new();
+    };
     let lines: Vec<&str> = text.lines().collect();
     let start = item.line.saturating_sub(1);
-    if start >= lines.len() { return String::new(); }
+    if start >= lines.len() {
+        return String::new();
+    }
 
     let end = match item.lang {
         DocLanguage::Fortran => find_fortran_end(&lines, start, &item.name, max_lines),
-        DocLanguage::Ada     => find_ada_end(&lines, start, &item.name, max_lines),
-        _                    => find_brace_end(&lines, start, max_lines),
+        DocLanguage::Ada => find_ada_end(&lines, start, &item.name, max_lines),
+        _ => find_brace_end(&lines, start, max_lines),
     };
 
     lines[start..=end].join("\n")
@@ -171,31 +189,56 @@ fn find_brace_end(lines: &[&str], start: usize, max: usize) -> usize {
         let mut chars = lines[i].chars().peekable();
         while let Some(ch) = chars.next() {
             if in_block_comment {
-                if ch == '*' && chars.peek() == Some(&'/') { chars.next(); in_block_comment = false; }
+                if ch == '*' && chars.peek() == Some(&'/') {
+                    chars.next();
+                    in_block_comment = false;
+                }
                 continue;
             }
             match ch {
                 '/' => match chars.peek() {
-                    Some(&'/') => break,                                       // line comment
-                    Some(&'*') => { chars.next(); in_block_comment = true; }  // block comment
+                    Some(&'/') => break, // line comment
+                    Some(&'*') => {
+                        chars.next();
+                        in_block_comment = true;
+                    } // block comment
                     _ => {}
                 },
-                '"' => { while let Some(c) = chars.next() { if c == '"' { break; } } }
-                '{' => { depth += 1; seen_open = true; }
-                '}' => { depth -= 1; }
+                '"' => {
+                    while let Some(c) = chars.next() {
+                        if c == '"' {
+                            break;
+                        }
+                    }
+                }
+                '{' => {
+                    depth += 1;
+                    seen_open = true;
+                }
+                '}' => {
+                    depth -= 1;
+                }
                 // A semicolon before any opening brace ends a forward declaration.
-                ';' if !seen_open => { return i; }
+                ';' if !seen_open => {
+                    return i;
+                }
                 _ => {}
             }
         }
-        if seen_open && depth <= 0 { return i; }
+        if seen_open && depth <= 0 {
+            return i;
+        }
     }
     bound
 }
 
 fn find_fortran_end(lines: &[&str], start: usize, name: &str, max: usize) -> usize {
     let bound = (start + max).min(lines.len().saturating_sub(1));
-    let bare = name.rsplit("::").next().unwrap_or(name).to_ascii_uppercase();
+    let bare = name
+        .rsplit("::")
+        .next()
+        .unwrap_or(name)
+        .to_ascii_uppercase();
     for i in (start + 1)..=bound {
         let up = lines[i].trim().to_ascii_uppercase();
         if up.starts_with("END SUBROUTINE")
@@ -205,7 +248,9 @@ fn find_fortran_end(lines: &[&str], start: usize, name: &str, max: usize) -> usi
         {
             // Match on name suffix if present
             let after = up.split_whitespace().nth(2).unwrap_or("");
-            if after.is_empty() || after == bare { return i; }
+            if after.is_empty() || after == bare {
+                return i;
+            }
         }
     }
     bound
@@ -217,8 +262,14 @@ fn find_ada_end(lines: &[&str], start: usize, name: &str, max: usize) -> usize {
     for i in (start + 1)..=bound {
         let up = lines[i].trim().to_ascii_uppercase();
         if up.starts_with("END ") || up == "END;" {
-            let after = up.split_whitespace().nth(1).unwrap_or("").trim_end_matches(';');
-            if after.is_empty() || after == bare { return i; }
+            let after = up
+                .split_whitespace()
+                .nth(1)
+                .unwrap_or("")
+                .trim_end_matches(';');
+            if after.is_empty() || after == bare {
+                return i;
+            }
         }
     }
     bound

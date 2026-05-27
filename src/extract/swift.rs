@@ -1,11 +1,15 @@
-use std::path::Path;
+use super::common::{
+    build_item, collect_c_block, collect_line_block, first_ident, item_has_content, next_non_blank,
+};
 use super::{DocExtractor, DocItem, DocKind, DocLanguage};
-use super::common::{build_item, item_has_content, collect_c_block, collect_line_block, next_non_blank, first_ident};
+use std::path::Path;
 
 pub struct SwiftExtractor;
 
 impl DocExtractor for SwiftExtractor {
-    fn extensions(&self) -> &[&str] { &["swift"] }
+    fn extensions(&self) -> &[&str] {
+        &["swift"]
+    }
     fn extract(&self, path: &Path, src: &str) -> Vec<DocItem> {
         extract_swift(src, path)
     }
@@ -24,8 +28,18 @@ pub(super) fn extract_swift(src: &str, file: &Path) -> Vec<DocItem> {
             let (block, end) = collect_line_block(&lines, i, "///");
             let sym = next_non_blank(&lines, end + 1);
             let (name, kind) = detect_swift_symbol(sym);
-            let item = build_item(block, name, kind, file, i + 1, DocLanguage::Swift, sym.to_string());
-            if item_has_content(&item) { items.push(item); }
+            let item = build_item(
+                block,
+                name,
+                kind,
+                file,
+                i + 1,
+                DocLanguage::Swift,
+                sym.to_string(),
+            );
+            if item_has_content(&item) {
+                items.push(item);
+            }
             i = end + 1;
             continue;
         }
@@ -35,8 +49,18 @@ pub(super) fn extract_swift(src: &str, file: &Path) -> Vec<DocItem> {
             let (block, end) = collect_c_block(&lines, i);
             let sym = next_non_blank(&lines, end + 1);
             let (name, kind) = detect_swift_symbol(sym);
-            let item = build_item(block, name, kind, file, i + 1, DocLanguage::Swift, sym.to_string());
-            if item_has_content(&item) { items.push(item); }
+            let item = build_item(
+                block,
+                name,
+                kind,
+                file,
+                i + 1,
+                DocLanguage::Swift,
+                sym.to_string(),
+            );
+            if item_has_content(&item) {
+                items.push(item);
+            }
             i = end + 1;
             continue;
         }
@@ -77,7 +101,9 @@ fn detect_swift_symbol(line: &str) -> (String, DocKind) {
         // Skip attribute lines like `@objc`, `@discardableResult`, `@MainActor`
         if t.starts_with('@') {
             let after_at = &t[1..];
-            let id_end = after_at.find(|c: char| !c.is_alphanumeric() && c != '_').unwrap_or(after_at.len());
+            let id_end = after_at
+                .find(|c: char| !c.is_alphanumeric() && c != '_')
+                .unwrap_or(after_at.len());
             let after_id = after_at[id_end..].trim_start();
             if after_id.starts_with('(') {
                 // Attribute with arguments: skip to closing paren
@@ -98,11 +124,19 @@ fn detect_swift_symbol(line: &str) -> (String, DocKind) {
     }
 
     // `class func` and `class var`/`let` are class-level members, not type declarations
-    if let Some(r) = t.strip_prefix("class func ") { return (swift_func_name(r), DocKind::Function); }
-    if let Some(r) = t.strip_prefix("class var ")  { return (first_ident(r),     DocKind::Variable); }
-    if let Some(r) = t.strip_prefix("class let ")  { return (first_ident(r),     DocKind::Variable); }
-    if let Some(r) = t.strip_prefix("func ")       { return (swift_func_name(r), DocKind::Function); }
-    if let Some(r) = t.strip_prefix("init")        {
+    if let Some(r) = t.strip_prefix("class func ") {
+        return (swift_func_name(r), DocKind::Function);
+    }
+    if let Some(r) = t.strip_prefix("class var ") {
+        return (first_ident(r), DocKind::Variable);
+    }
+    if let Some(r) = t.strip_prefix("class let ") {
+        return (first_ident(r), DocKind::Variable);
+    }
+    if let Some(r) = t.strip_prefix("func ") {
+        return (swift_func_name(r), DocKind::Function);
+    }
+    if let Some(r) = t.strip_prefix("init") {
         // `init(`, `init?(`, `init!(`
         let name = if r.starts_with('(') || r.starts_with('?') || r.starts_with('!') {
             "init".to_string()
@@ -112,15 +146,34 @@ fn detect_swift_symbol(line: &str) -> (String, DocKind) {
         };
         return (name, DocKind::Function);
     }
-    if let Some(r) = t.strip_prefix("subscript")  { let _ = r; return ("subscript".to_string(), DocKind::Function); }
-    if let Some(r) = t.strip_prefix("var ")        { return (first_ident(r), DocKind::Variable); }
-    if let Some(r) = t.strip_prefix("let ")        { return (first_ident(r), DocKind::Variable); }
-    if let Some(r) = t.strip_prefix("struct ")     { return (first_ident(r), DocKind::Struct); }
-    if let Some(r) = t.strip_prefix("enum ")       { return (first_ident(r), DocKind::Enum); }
-    if let Some(r) = t.strip_prefix("class ")      { return (first_ident(r), DocKind::Class); }
-    if let Some(r) = t.strip_prefix("protocol ")   { return (first_ident(r), DocKind::Interface); }
-    if let Some(r) = t.strip_prefix("typealias ")  { return (first_ident(r), DocKind::Typedef); }
-    if let Some(r) = t.strip_prefix("extension ")  { return (first_ident(r), DocKind::Struct); }
+    if let Some(r) = t.strip_prefix("subscript") {
+        let _ = r;
+        return ("subscript".to_string(), DocKind::Function);
+    }
+    if let Some(r) = t.strip_prefix("var ") {
+        return (first_ident(r), DocKind::Variable);
+    }
+    if let Some(r) = t.strip_prefix("let ") {
+        return (first_ident(r), DocKind::Variable);
+    }
+    if let Some(r) = t.strip_prefix("struct ") {
+        return (first_ident(r), DocKind::Struct);
+    }
+    if let Some(r) = t.strip_prefix("enum ") {
+        return (first_ident(r), DocKind::Enum);
+    }
+    if let Some(r) = t.strip_prefix("class ") {
+        return (first_ident(r), DocKind::Class);
+    }
+    if let Some(r) = t.strip_prefix("protocol ") {
+        return (first_ident(r), DocKind::Interface);
+    }
+    if let Some(r) = t.strip_prefix("typealias ") {
+        return (first_ident(r), DocKind::Typedef);
+    }
+    if let Some(r) = t.strip_prefix("extension ") {
+        return (first_ident(r), DocKind::Struct);
+    }
 
     (String::new(), DocKind::Unknown)
 }
@@ -130,7 +183,8 @@ fn detect_swift_symbol(line: &str) -> (String, DocKind) {
 fn swift_func_name(s: &str) -> String {
     // Operator functions may contain symbols like `==`, `+`, etc.
     // We split on `(` or `<` to isolate the name.
-    s.split(|c: char| c == '(' || c == '<').next()
+    s.split(|c: char| c == '(' || c == '<')
+        .next()
         .unwrap_or("")
         .trim()
         .to_string()
@@ -144,7 +198,9 @@ fn find_close_paren(s: &str) -> Option<usize> {
             '(' => depth += 1,
             ')' => {
                 depth = depth.saturating_sub(1);
-                if depth == 0 { return Some(i); }
+                if depth == 0 {
+                    return Some(i);
+                }
             }
             _ => {}
         }
@@ -229,7 +285,8 @@ func add(a: Int, b: Int) -> Int { return a + b }"#;
 
     #[test]
     fn swift_access_modifiers_stripped() {
-        let src = "/// Public API surface.\npublic final override func compute() -> Int { return 42 }";
+        let src =
+            "/// Public API surface.\npublic final override func compute() -> Int { return 42 }";
         let got = items(src);
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].name, "compute");

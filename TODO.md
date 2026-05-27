@@ -10,7 +10,7 @@ Languages freight supports that docify does not yet extract:
 | ~~**Zig**~~    | ~~`///` doc comments~~  | Done in `src/extract/zig.rs`       |
 | ~~**Swift**~~  | ~~`///` and `/** */`~~  | Done in `src/extract/swift.rs`     |
 | ~~**Kotlin**~~ | ~~`/** */` KDoc~~       | Done in `src/extract/kotlin.rs`    |
-| **CUDA**   | Doxygen `/** */`        | Already falls through to Cpp; needs `__global__` / `__device__` qualifier handling |
+| **CUDA**   | Doxygen `/** */`        | Falls through to Cpp; `__global__` / `__device__` qualifier display handled; still needs broader CUDA semantic coverage |
 | **ISPC**   | C-style `/** */`        | `task`, `export`, `uniform` qualifiers |
 | **HIP**    | Doxygen `/** */`        | Same as CUDA, different builtins   |
 | **Python** | Docstrings `""" """`    | Requires different extraction logic (not comment-based) |
@@ -27,6 +27,12 @@ and a terminal TUI (`render_tui.rs`). Gaps:
 
 ## Extraction quality
 
+- **Language-specific symbol kinds**: `DocKind` is currently a single cross-language
+  enum. That is too coarse for languages with different type systems and symbol
+  categories (Python modules/classes/functions/properties, Rust traits/impls/macros,
+  C++ concepts/templates/operators, etc.). Consider replacing or supplementing it
+  with a language-specific enum and mapping those variants to coarse categories
+  only at render/API boundaries.
 - **C/C++ `@param` direction tags**: `[in]`, `[out]`, `[in,out]` in Doxygen params
   are parsed but not stored in `DocTag`. Add a `direction: Option<ParamDir>` field.
 - **Rust intra-doc links**: `[`SomeType`]` references are preserved verbatim in the
@@ -42,4 +48,4 @@ and a terminal TUI (`render_tui.rs`). Gaps:
 - Tests for the Go extractor's package-qualification logic (multi-package repos).
 - Tests for Java inner classes and interface methods.
 - Test round-trip: extract → JSON → re-parse and compare field by field.
-- Test that CUDA `__global__` functions are correctly classified as `DocKind::Function`.
+- ~~Test that CUDA `__global__` functions are correctly classified as `DocKind::Function`.~~

@@ -53,7 +53,9 @@ pub fn protect_math(text: &str) -> (String, Vec<MathRegion>) {
         if next2!('$', '$') {
             let start = i;
             i += 2;
-            while i + 1 < n && !next2!('$', '$') { i += 1; }
+            while i + 1 < n && !next2!('$', '$') {
+                i += 1;
+            }
             let end = if i + 1 < n { i + 2 } else { n };
             push_region(&mut out, &mut regions, &chars[start..end]);
             i = end;
@@ -62,7 +64,9 @@ pub fn protect_math(text: &str) -> (String, Vec<MathRegion>) {
         } else if next2!('\\', '[') {
             let start = i;
             i += 2;
-            while i + 1 < n && !next2!('\\', ']') { i += 1; }
+            while i + 1 < n && !next2!('\\', ']') {
+                i += 1;
+            }
             let end = if i + 1 < n { i + 2 } else { n };
             push_region(&mut out, &mut regions, &chars[start..end]);
             i = end;
@@ -71,7 +75,9 @@ pub fn protect_math(text: &str) -> (String, Vec<MathRegion>) {
         } else if next2!('\\', '(') {
             let start = i;
             i += 2;
-            while i + 1 < n && !next2!('\\', ')') && chars[i] != '\n' { i += 1; }
+            while i + 1 < n && !next2!('\\', ')') && chars[i] != '\n' {
+                i += 1;
+            }
             let end = if i + 1 < n { i + 2 } else { n };
             push_region(&mut out, &mut regions, &chars[start..end]);
             i = end;
@@ -79,12 +85,17 @@ pub fn protect_math(text: &str) -> (String, Vec<MathRegion>) {
         // $...$  inline math — only when opening $ is not followed by whitespace
         // and the closing $ is on the same line.
         } else if chars[i] == '$'
-            && chars.get(i + 1).map(|c| !c.is_whitespace() && *c != '$').unwrap_or(false)
+            && chars
+                .get(i + 1)
+                .map(|c| !c.is_whitespace() && *c != '$')
+                .unwrap_or(false)
         {
             let start = i;
             i += 1;
             // Collect until closing $ or end-of-line
-            while i < n && chars[i] != '$' && chars[i] != '\n' { i += 1; }
+            while i < n && chars[i] != '$' && chars[i] != '\n' {
+                i += 1;
+            }
             if i < n && chars[i] == '$' {
                 let end = i + 1;
                 push_region(&mut out, &mut regions, &chars[start..end]);
@@ -94,7 +105,6 @@ pub fn protect_math(text: &str) -> (String, Vec<MathRegion>) {
                 let frag: String = chars[start..i].iter().collect();
                 out.push_str(&frag);
             }
-
         } else {
             out.push(chars[i]);
             i += 1;
@@ -107,7 +117,10 @@ pub fn protect_math(text: &str) -> (String, Vec<MathRegion>) {
 fn push_region(out: &mut String, regions: &mut Vec<MathRegion>, chars: &[char]) {
     let raw: String = chars.iter().collect();
     let placeholder = format!("@FREIGHTMATH{}@", regions.len());
-    regions.push(MathRegion { placeholder: placeholder.clone(), raw });
+    regions.push(MathRegion {
+        placeholder: placeholder.clone(),
+        raw,
+    });
     out.push_str(&placeholder);
 }
 
@@ -185,28 +198,34 @@ fn md_events_to_latex(text: &str) -> String {
             }
 
             // ── Lists ─────────────────────────────────────────────────────
-            Event::Start(Tag::List(None))    => out.push_str("\n\\begin{itemize}\n"),
+            Event::Start(Tag::List(None)) => out.push_str("\n\\begin{itemize}\n"),
             Event::Start(Tag::List(Some(_))) => out.push_str("\n\\begin{enumerate}\n"),
-            Event::End(TagEnd::List(false))  => out.push_str("\\end{itemize}\n"),
-            Event::End(TagEnd::List(true))   => out.push_str("\\end{enumerate}\n"),
+            Event::End(TagEnd::List(false)) => out.push_str("\\end{itemize}\n"),
+            Event::End(TagEnd::List(true)) => out.push_str("\\end{enumerate}\n"),
             Event::Start(Tag::Item) => out.push_str("\\item "),
             Event::End(TagEnd::Item) => out.push('\n'),
 
             // ── Tables ────────────────────────────────────────────────────
             Event::Start(Tag::Table(aligns)) => {
                 current_col = 0;
-                let spec: String = aligns.iter().map(|a| match a {
-                    Alignment::Left | Alignment::None => 'l',
-                    Alignment::Center => 'c',
-                    Alignment::Right  => 'r',
-                }).collect();
+                let spec: String = aligns
+                    .iter()
+                    .map(|a| match a {
+                        Alignment::Left | Alignment::None => 'l',
+                        Alignment::Center => 'c',
+                        Alignment::Right => 'r',
+                    })
+                    .collect();
                 out.push_str(&format!(
                     "\n\\begin{{tabular}}{{@{{}} {spec} @{{}}}}\n\\toprule\n"
                 ));
             }
             Event::End(TagEnd::Table) => out.push_str("\\bottomrule\n\\end{tabular}\n"),
 
-            Event::Start(Tag::TableHead) => { in_table_head = true; current_col = 0; }
+            Event::Start(Tag::TableHead) => {
+                in_table_head = true;
+                current_col = 0;
+            }
             Event::End(TagEnd::TableHead) => {
                 in_table_head = false;
                 out.push_str("\\\\\n\\midrule\n");
@@ -214,11 +233,15 @@ fn md_events_to_latex(text: &str) -> String {
             }
             Event::Start(Tag::TableRow) => current_col = 0,
             Event::End(TagEnd::TableRow) => {
-                if !in_table_head { out.push_str("\\\\\n"); }
+                if !in_table_head {
+                    out.push_str("\\\\\n");
+                }
                 current_col = 0;
             }
             Event::Start(Tag::TableCell) => {
-                if current_col > 0 { out.push_str(" & "); }
+                if current_col > 0 {
+                    out.push_str(" & ");
+                }
             }
             Event::End(TagEnd::TableCell) => current_col += 1,
 
@@ -277,18 +300,21 @@ pub fn tex_escape(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for c in s.chars() {
         out.push_str(match c {
-            '&'  => r"\&",
-            '%'  => r"\%",
-            '#'  => r"\#",
-            '_'  => r"\_",
-            '{'  => r"\{",
-            '}'  => r"\}",
-            '~'  => r"\textasciitilde{}",
-            '^'  => r"\textasciicircum{}",
+            '&' => r"\&",
+            '%' => r"\%",
+            '#' => r"\#",
+            '_' => r"\_",
+            '{' => r"\{",
+            '}' => r"\}",
+            '~' => r"\textasciitilde{}",
+            '^' => r"\textasciicircum{}",
             '\\' => r"\textbackslash{}",
-            '<'  => r"\textless{}",
-            '>'  => r"\textgreater{}",
-            _    => { out.push(c); continue; }
+            '<' => r"\textless{}",
+            '>' => r"\textgreater{}",
+            _ => {
+                out.push(c);
+                continue;
+            }
         });
     }
     out

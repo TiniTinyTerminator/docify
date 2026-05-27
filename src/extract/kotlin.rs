@@ -1,11 +1,13 @@
-use std::path::Path;
+use super::common::{build_item, collect_c_block, first_ident, item_has_content, next_decl_sym};
 use super::{DocExtractor, DocItem, DocKind, DocLanguage};
-use super::common::{build_item, item_has_content, collect_c_block, next_decl_sym, first_ident};
+use std::path::Path;
 
 pub struct KotlinExtractor;
 
 impl DocExtractor for KotlinExtractor {
-    fn extensions(&self) -> &[&str] { &["kt", "kts"] }
+    fn extensions(&self) -> &[&str] {
+        &["kt", "kts"]
+    }
     fn extract(&self, path: &Path, src: &str) -> Vec<DocItem> {
         extract_kotlin(src, path)
     }
@@ -26,8 +28,18 @@ pub(super) fn extract_kotlin(src: &str, file: &Path) -> Vec<DocItem> {
             let sym = next_decl_sym(&lines, end + 1);
             let (name, kind) = detect_kotlin_symbol(sym);
             if !name.is_empty() || kind != DocKind::Unknown {
-                let item = build_item(block, name, kind, file, i + 1, DocLanguage::Kotlin, sym.to_string());
-                if item_has_content(&item) { items.push(item); }
+                let item = build_item(
+                    block,
+                    name,
+                    kind,
+                    file,
+                    i + 1,
+                    DocLanguage::Kotlin,
+                    sym.to_string(),
+                );
+                if item_has_content(&item) {
+                    items.push(item);
+                }
             }
             i = end + 1;
             continue;
@@ -41,11 +53,26 @@ pub(super) fn extract_kotlin(src: &str, file: &Path) -> Vec<DocItem> {
 fn detect_kotlin_symbol(line: &str) -> (String, DocKind) {
     // Access / modifier keywords to strip before the declaration keyword
     const MODIFIERS: &[&str] = &[
-        "public ", "private ", "internal ", "protected ",
-        "open ", "final ", "abstract ", "inner ",
-        "inline ", "infix ", "operator ", "tailrec ", "suspend ",
-        "override ", "external ", "expect ", "actual ",
-        "companion ", "value ", "annotation ",
+        "public ",
+        "private ",
+        "internal ",
+        "protected ",
+        "open ",
+        "final ",
+        "abstract ",
+        "inner ",
+        "inline ",
+        "infix ",
+        "operator ",
+        "tailrec ",
+        "suspend ",
+        "override ",
+        "external ",
+        "expect ",
+        "actual ",
+        "companion ",
+        "value ",
+        "annotation ",
     ];
 
     let mut t = line.trim();
@@ -55,7 +82,9 @@ fn detect_kotlin_symbol(line: &str) -> (String, DocKind) {
         if t.starts_with('@') {
             // Skip the annotation identifier (and optional parenthesized args)
             let after_at = &t[1..];
-            let id_end = after_at.find(|c: char| !c.is_alphanumeric() && c != '_').unwrap_or(after_at.len());
+            let id_end = after_at
+                .find(|c: char| !c.is_alphanumeric() && c != '_')
+                .unwrap_or(after_at.len());
             let after_id = after_at[id_end..].trim_start();
             if after_id.starts_with('(') {
                 // Skip over parenthesized argument list
@@ -76,16 +105,36 @@ fn detect_kotlin_symbol(line: &str) -> (String, DocKind) {
     }
 
     // Multi-word declaration keywords must be checked before single-word ones
-    if let Some(r) = t.strip_prefix("enum class ")   { return (first_ident(r), DocKind::Enum); }
-    if let Some(r) = t.strip_prefix("data class ")   { return (first_ident(r), DocKind::Struct); }
-    if let Some(r) = t.strip_prefix("sealed class ") { return (first_ident(r), DocKind::Class); }
-    if let Some(r) = t.strip_prefix("fun ")          { return (fun_name(r),    DocKind::Function); }
-    if let Some(r) = t.strip_prefix("class ")        { return (first_ident(r), DocKind::Class); }
-    if let Some(r) = t.strip_prefix("interface ")    { return (first_ident(r), DocKind::Interface); }
-    if let Some(r) = t.strip_prefix("object ")       { return (first_ident(r), DocKind::Struct); }
-    if let Some(r) = t.strip_prefix("val ")          { return (val_name(r),    DocKind::Variable); }
-    if let Some(r) = t.strip_prefix("var ")          { return (val_name(r),    DocKind::Variable); }
-    if let Some(r) = t.strip_prefix("typealias ")    { return (first_ident(r), DocKind::Typedef); }
+    if let Some(r) = t.strip_prefix("enum class ") {
+        return (first_ident(r), DocKind::Enum);
+    }
+    if let Some(r) = t.strip_prefix("data class ") {
+        return (first_ident(r), DocKind::Struct);
+    }
+    if let Some(r) = t.strip_prefix("sealed class ") {
+        return (first_ident(r), DocKind::Class);
+    }
+    if let Some(r) = t.strip_prefix("fun ") {
+        return (fun_name(r), DocKind::Function);
+    }
+    if let Some(r) = t.strip_prefix("class ") {
+        return (first_ident(r), DocKind::Class);
+    }
+    if let Some(r) = t.strip_prefix("interface ") {
+        return (first_ident(r), DocKind::Interface);
+    }
+    if let Some(r) = t.strip_prefix("object ") {
+        return (first_ident(r), DocKind::Struct);
+    }
+    if let Some(r) = t.strip_prefix("val ") {
+        return (val_name(r), DocKind::Variable);
+    }
+    if let Some(r) = t.strip_prefix("var ") {
+        return (val_name(r), DocKind::Variable);
+    }
+    if let Some(r) = t.strip_prefix("typealias ") {
+        return (first_ident(r), DocKind::Typedef);
+    }
 
     (String::new(), DocKind::Unknown)
 }
@@ -124,7 +173,9 @@ fn find_close_paren(s: &str) -> Option<usize> {
             '(' => depth += 1,
             ')' => {
                 depth = depth.saturating_sub(1);
-                if depth == 0 { return Some(i); }
+                if depth == 0 {
+                    return Some(i);
+                }
             }
             _ => {}
         }
@@ -156,8 +207,11 @@ fun abs(x: Int): Int = if (x < 0) -x else x"#;
         assert_eq!(got[0].brief, "Compute the absolute value.");
         assert_eq!(got[0].name, "abs");
         assert!(matches!(got[0].kind, DocKind::Function));
-        let params: Vec<_> = got[0].tags.iter()
-            .filter(|t| t.kind == super::super::TagKind::Param).collect();
+        let params: Vec<_> = got[0]
+            .tags
+            .iter()
+            .filter(|t| t.kind == super::super::TagKind::Param)
+            .collect();
         assert_eq!(params.len(), 1);
         assert_eq!(params[0].name.as_deref(), Some("x"));
     }
@@ -207,7 +261,8 @@ fun abs(x: Int): Int = if (x < 0) -x else x"#;
 
     #[test]
     fn kotlin_modifiers_stripped() {
-        let src = "/** Open API entry. */\npublic open fun greet(name: String): String = \"Hi $name\"";
+        let src =
+            "/** Open API entry. */\npublic open fun greet(name: String): String = \"Hi $name\"";
         let got = items(src);
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].name, "greet");

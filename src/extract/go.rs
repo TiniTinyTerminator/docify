@@ -1,11 +1,13 @@
-use std::path::Path;
+use super::common::{build_item, first_ident, item_has_content};
 use super::{DocExtractor, DocItem, DocKind, DocLanguage};
-use super::common::{build_item, item_has_content, first_ident};
+use std::path::Path;
 
 pub struct GoExtractor;
 
 impl DocExtractor for GoExtractor {
-    fn extensions(&self) -> &[&str] { &["go"] }
+    fn extensions(&self) -> &[&str] {
+        &["go"]
+    }
     fn extract(&self, path: &Path, src: &str) -> Vec<DocItem> {
         extract_go(src, path)
     }
@@ -17,11 +19,16 @@ pub(super) fn extract_go(src: &str, file: &Path) -> Vec<DocItem> {
     let mut i = 0;
 
     // Pre-scan for the package declaration so we can qualify all names.
-    let pkg_name: String = lines.iter()
+    let pkg_name: String = lines
+        .iter()
         .find_map(|l| {
             let rest = l.trim().strip_prefix("package ")?;
             let name = first_ident(rest);
-            if !name.is_empty() { Some(name) } else { None }
+            if !name.is_empty() {
+                Some(name)
+            } else {
+                None
+            }
         })
         .unwrap_or_default();
 
@@ -36,13 +43,24 @@ pub(super) fn extract_go(src: &str, file: &Path) -> Vec<DocItem> {
             let (name, kind) = detect_go_symbol(sym);
             if kind != DocKind::Unknown {
                 // Qualify with the package name; skip for the package declaration itself.
-                let qualified = if !pkg_name.is_empty() && kind != DocKind::Module && !name.is_empty() {
-                    format!("{pkg_name}.{name}")
-                } else {
-                    name
-                };
-                let item = build_item(block, qualified, kind, file, i + 1, DocLanguage::Go, sym.to_string());
-                if item_has_content(&item) { items.push(item); }
+                let qualified =
+                    if !pkg_name.is_empty() && kind != DocKind::Module && !name.is_empty() {
+                        format!("{pkg_name}.{name}")
+                    } else {
+                        name
+                    };
+                let item = build_item(
+                    block,
+                    qualified,
+                    kind,
+                    file,
+                    i + 1,
+                    DocLanguage::Go,
+                    sym.to_string(),
+                );
+                if item_has_content(&item) {
+                    items.push(item);
+                }
                 i = end + 1;
                 continue;
             }
@@ -58,7 +76,9 @@ fn collect_go_comment(lines: &[&str], start: usize) -> (Vec<String>, usize) {
     while i < lines.len() {
         let t = lines[i].trim();
         if t.starts_with("//") && !t.starts_with("//go:") && !t.starts_with("//nolint") {
-            let content = t.strip_prefix("// ").unwrap_or_else(|| t.strip_prefix("//").unwrap_or(""));
+            let content = t
+                .strip_prefix("// ")
+                .unwrap_or_else(|| t.strip_prefix("//").unwrap_or(""));
             out.push(content.to_string());
             i += 1;
         } else {
@@ -80,21 +100,35 @@ fn detect_go_symbol(line: &str) -> (String, DocKind) {
             rest
         };
         let name = rest.split('(').next().unwrap_or("").trim().to_string();
-        if !name.is_empty() { return (name, DocKind::Function); }
+        if !name.is_empty() {
+            return (name, DocKind::Function);
+        }
     }
 
     if let Some(rest) = t.strip_prefix("type ") {
         let name = first_ident(rest);
         // Determine kind by inspecting what follows the name
         let after = rest[name.len()..].trim_start();
-        if after.starts_with("struct") { return (name, DocKind::Struct); }
-        if after.starts_with("interface") { return (name, DocKind::Interface); }
-        if !name.is_empty() { return (name, DocKind::Typedef); }
+        if after.starts_with("struct") {
+            return (name, DocKind::Struct);
+        }
+        if after.starts_with("interface") {
+            return (name, DocKind::Interface);
+        }
+        if !name.is_empty() {
+            return (name, DocKind::Typedef);
+        }
     }
 
-    if let Some(rest) = t.strip_prefix("var ")   { return (first_ident(rest), DocKind::Variable); }
-    if let Some(rest) = t.strip_prefix("const ") { return (first_ident(rest), DocKind::Variable); }
-    if let Some(rest) = t.strip_prefix("package ") { return (first_ident(rest), DocKind::Module); }
+    if let Some(rest) = t.strip_prefix("var ") {
+        return (first_ident(rest), DocKind::Variable);
+    }
+    if let Some(rest) = t.strip_prefix("const ") {
+        return (first_ident(rest), DocKind::Variable);
+    }
+    if let Some(rest) = t.strip_prefix("package ") {
+        return (first_ident(rest), DocKind::Module);
+    }
 
     (String::new(), DocKind::Unknown)
 }

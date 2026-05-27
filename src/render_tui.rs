@@ -36,8 +36,16 @@ pub fn items_to_markdown(items: &[DocItem]) -> String {
         }
 
         // Parameters + Returns in one table; a separator row divides them.
-        let params:  Vec<_> = item.tags.iter().filter(|t| t.kind == TagKind::Param).collect();
-        let returns: Vec<_> = item.tags.iter().filter(|t| t.kind == TagKind::Return).collect();
+        let params: Vec<_> = item
+            .tags
+            .iter()
+            .filter(|t| t.kind == TagKind::Param)
+            .collect();
+        let returns: Vec<_> = item
+            .tags
+            .iter()
+            .filter(|t| t.kind == TagKind::Return)
+            .collect();
         if !params.is_empty() || !returns.is_empty() {
             out.push_str("| Parameter | Description |\n");
             out.push_str("|-----------|-------------|\n");
@@ -70,8 +78,12 @@ pub fn items_to_markdown(items: &[DocItem]) -> String {
                     out.push_str("### See also\n\n");
                     // Emit each comma- or space-delimited name as a cross-reference link.
                     for name in tag.text.split(|c: char| c == ',' || c == '\n') {
-                        let name = name.trim().trim_matches(|c: char| !c.is_alphanumeric() && c != '_' && c != ':');
-                        if name.is_empty() { continue; }
+                        let name = name
+                            .trim()
+                            .trim_matches(|c: char| !c.is_alphanumeric() && c != '_' && c != ':');
+                        if name.is_empty() {
+                            continue;
+                        }
                         out.push_str("- [");
                         out.push_str(name);
                         out.push_str("](#");
@@ -102,13 +114,26 @@ pub fn items_to_markdown(items: &[DocItem]) -> String {
 
 fn clean_sig(sig: &str) -> &str {
     sig.trim_end()
-       .trim_end_matches(|c: char| c == '{' || c == ';')
-       .trim_end()
+        .trim_end_matches(|c: char| c == '{' || c == ';')
+        .trim_end()
 }
 
 /// Convert `\[...\]` display math and `\(...\)` inline math to the `$$...$$` /
 /// `$...$` forms that pulldown-cmark's `ENABLE_MATH` understands.
 fn normalize_math(text: &str) -> String {
+    #[cfg(feature = "rich-math")]
+    {
+        crate::util::latex::render_math_lines(text)
+    }
+
+    #[cfg(not(feature = "rich-math"))]
+    {
+        normalize_math_delimiters(text)
+    }
+}
+
+#[cfg(not(feature = "rich-math"))]
+fn normalize_math_delimiters(text: &str) -> String {
     if !text.contains("\\[") && !text.contains("\\(") {
         return text.to_owned();
     }
@@ -118,11 +143,14 @@ fn normalize_math(text: &str) -> String {
         let pd = rest.find("\\[");
         let pi = rest.find("\\(");
         let (open, close, md_o, md_c, pos) = match (pd, pi) {
-            (None, None) => { out.push_str(rest); break; }
-            (Some(a), None)             => ("\\[", "\\]", "$$", "$$", a),
-            (None, Some(b))             => ("\\(", "\\)", "$",  "$",  b),
+            (None, None) => {
+                out.push_str(rest);
+                break;
+            }
+            (Some(a), None) => ("\\[", "\\]", "$$", "$$", a),
+            (None, Some(b)) => ("\\(", "\\)", "$", "$", b),
             (Some(a), Some(b)) if a <= b => ("\\[", "\\]", "$$", "$$", a),
-            (_, Some(b))                => ("\\(", "\\)", "$",  "$",  b),
+            (_, Some(b)) => ("\\(", "\\)", "$", "$", b),
         };
         out.push_str(&rest[..pos]);
         rest = &rest[pos + open.len()..];

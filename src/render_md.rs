@@ -67,7 +67,8 @@ pub fn render_markdown(set: &DocSet, out_dir: &Path) -> std::io::Result<()> {
     // Global index and symbol list
     let mut by_file: BTreeMap<String, Vec<&DocItem>> = BTreeMap::new();
     for item in &set.items {
-        let rel = item.file
+        let rel = item
+            .file
             .strip_prefix(&set.source_root)
             .unwrap_or(&item.file)
             .to_string_lossy()
@@ -86,13 +87,13 @@ struct Groups<'a> {
     /// C++/Rust namespace (or module) qualified path → items at that scope.
     namespaces: BTreeMap<String, Vec<&'a DocItem>>,
     /// Qualified class/struct name → items belonging to that class.
-    classes:    BTreeMap<String, Vec<&'a DocItem>>,
+    classes: BTreeMap<String, Vec<&'a DocItem>>,
     /// Fortran module name → all items from that module's source file.
-    modules:    BTreeMap<String, Vec<&'a DocItem>>,
+    modules: BTreeMap<String, Vec<&'a DocItem>>,
     /// Doxygen @defgroup/@addtogroup group name → items in that group.
-    groups:     BTreeMap<String, Vec<&'a DocItem>>,
+    groups: BTreeMap<String, Vec<&'a DocItem>>,
     /// Fallback: source-relative path → items not assigned to any scope.
-    files:      BTreeMap<String, Vec<&'a DocItem>>,
+    files: BTreeMap<String, Vec<&'a DocItem>>,
 }
 
 fn group_items<'a>(
@@ -113,14 +114,14 @@ fn group_items<'a>(
 
     let mut groups = Groups {
         namespaces: BTreeMap::new(),
-        classes:    BTreeMap::new(),
-        modules:    BTreeMap::new(),
-        groups:     BTreeMap::new(),
-        files:      BTreeMap::new(),
+        classes: BTreeMap::new(),
+        modules: BTreeMap::new(),
+        groups: BTreeMap::new(),
+        files: BTreeMap::new(),
     };
 
     for item in items {
-        let is_cpp      = matches!(item.lang, DocLanguage::C | DocLanguage::Cpp);
+        let is_cpp = matches!(item.lang, DocLanguage::C | DocLanguage::Cpp);
         // Rust uses `::` for mod qualification, same routing as C++ namespaces.
         let has_ns_scope = is_cpp || item.lang == DocLanguage::Rust;
 
@@ -132,7 +133,11 @@ fn group_items<'a>(
         // Class member (populated by libclang extractor).
         if is_cpp && item.meta.parent.is_some() {
             let parent_qualified = parent_qualified_name(item);
-            groups.classes.entry(parent_qualified).or_default().push(item);
+            groups
+                .classes
+                .entry(parent_qualified)
+                .or_default()
+                .push(item);
             continue;
         }
 
@@ -141,16 +146,28 @@ fn group_items<'a>(
             && matches!(item.kind, DocKind::Class | DocKind::Struct)
             && item.name.contains("::")
         {
-            groups.classes.entry(item.name.clone()).or_default().insert(0, item);
+            groups
+                .classes
+                .entry(item.name.clone())
+                .or_default()
+                .insert(0, item);
             let ns = &item.name[..item.name.rfind("::").unwrap()];
-            groups.namespaces.entry(ns.to_string()).or_default().push(item);
+            groups
+                .namespaces
+                .entry(ns.to_string())
+                .or_default()
+                .push(item);
             continue;
         }
 
         // C++ or Rust items with a scope qualifier (`::`) → namespace/module page.
         if has_ns_scope && item.name.contains("::") {
             let ns = &item.name[..item.name.rfind("::").unwrap()];
-            groups.namespaces.entry(ns.to_string()).or_default().push(item);
+            groups
+                .namespaces
+                .entry(ns.to_string())
+                .or_default()
+                .push(item);
             continue;
         }
 
@@ -158,7 +175,11 @@ fn group_items<'a>(
         if item.lang == DocLanguage::Fortran {
             let rel = rel_path(item, source_root);
             if let Some(mod_name) = module_by_file.get(&rel) {
-                groups.modules.entry(mod_name.clone()).or_default().push(item);
+                groups
+                    .modules
+                    .entry(mod_name.clone())
+                    .or_default()
+                    .push(item);
                 continue;
             }
         }
@@ -196,10 +217,16 @@ struct SymbolIndex {
 }
 
 impl SymbolIndex {
-    fn build(items: &[DocItem], source_root: &Path, module_by_file: &HashMap<String, String>) -> Self {
+    fn build(
+        items: &[DocItem],
+        source_root: &Path,
+        module_by_file: &HashMap<String, String>,
+    ) -> Self {
         let mut map = HashMap::new();
         for item in items {
-            if item.name.is_empty() { continue; }
+            if item.name.is_empty() {
+                continue;
+            }
             let page = page_path_for(item, source_root, module_by_file);
             let anchor = item_anchor_simple(item);
             map.insert(item.name.clone(), (page, anchor));
@@ -217,8 +244,12 @@ impl SymbolIndex {
 }
 
 /// Determine the output page path (relative to doc root) for a given item.
-fn page_path_for(item: &DocItem, source_root: &Path, module_by_file: &HashMap<String, String>) -> String {
-    let is_cpp       = matches!(item.lang, DocLanguage::C | DocLanguage::Cpp);
+fn page_path_for(
+    item: &DocItem,
+    source_root: &Path,
+    module_by_file: &HashMap<String, String>,
+) -> String {
+    let is_cpp = matches!(item.lang, DocLanguage::C | DocLanguage::Cpp);
     let has_ns_scope = is_cpp || item.lang == DocLanguage::Rust;
 
     if is_cpp && item.meta.parent.is_some() {
@@ -244,11 +275,25 @@ fn page_path_for(item: &DocItem, source_root: &Path, module_by_file: &HashMap<St
 
 /// Simple anchor for structured pages: `{kind}-{simple_lowercase_name}`.
 fn item_anchor_simple(item: &DocItem) -> String {
-    let simple = item.name.rfind("::").map_or(item.name.as_str(), |p| &item.name[p + 2..]);
-    let slug: String = simple.chars()
-        .map(|c| if c.is_alphanumeric() { c.to_ascii_lowercase() } else { '-' })
+    let simple = item
+        .name
+        .rfind("::")
+        .map_or(item.name.as_str(), |p| &item.name[p + 2..]);
+    let slug: String = simple
+        .chars()
+        .map(|c| {
+            if c.is_alphanumeric() {
+                c.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
         .collect();
-    let slug = slug.split('-').filter(|s| !s.is_empty()).collect::<Vec<_>>().join("-");
+    let slug = slug
+        .split('-')
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join("-");
     format!("{}-{}", item.kind.label(), slug)
 }
 
@@ -261,7 +306,11 @@ fn relative_page(from_page: &str, to_page: &str) -> String {
         // Both are at depth 1 (subdirectory pages) or from is depth 1, to is depth 0.
         let to_dir = to_page.rfind('/').map(|p| &to_page[..p]).unwrap_or("");
         if from_dir == to_dir {
-            to_page.rfind('/').map(|p| &to_page[p + 1..]).unwrap_or(to_page).to_string()
+            to_page
+                .rfind('/')
+                .map(|p| &to_page[p + 1..])
+                .unwrap_or(to_page)
+                .to_string()
         } else if to_dir.is_empty() {
             format!("../{to_page}")
         } else {
@@ -273,31 +322,44 @@ fn relative_page(from_page: &str, to_page: &str) -> String {
 /// Resolve `@see` tag text to a Markdown link when the text matches a known symbol.
 fn resolve_see(text: &str, sym: &SymbolIndex, from_page: &str) -> String {
     let candidate = text.trim();
-    sym.link_for(candidate, from_page).unwrap_or_else(|| candidate.to_string())
+    sym.link_for(candidate, from_page)
+        .unwrap_or_else(|| candidate.to_string())
 }
 
 // ── Namespace pages ───────────────────────────────────────────────────────────
 
-fn render_namespace_page(
-    ns: &str,
-    items: &[&DocItem],
-    sym: &SymbolIndex,
-    page: &str,
-) -> String {
+fn render_namespace_page(ns: &str, items: &[&DocItem], sym: &SymbolIndex, page: &str) -> String {
     let mut md = String::new();
     let depth_prefix = "../";
 
     let _ = writeln!(md, "# namespace `{ns}`\n");
-    let _ = writeln!(md, "[← Index]({depth_prefix}index.md) | [All symbols]({depth_prefix}symbols.md)\n");
+    let _ = writeln!(
+        md,
+        "[← Index]({depth_prefix}index.md) | [All symbols]({depth_prefix}symbols.md)\n"
+    );
     let _ = writeln!(md, "---\n");
 
     // Group into kinds
-    let classes: Vec<&DocItem> = items.iter().copied()
-        .filter(|i| matches!(i.kind, DocKind::Class | DocKind::Struct)).collect();
-    let fns: Vec<&DocItem> = items.iter().copied()
-        .filter(|i| matches!(i.kind, DocKind::Function | DocKind::Subroutine)).collect();
-    let vars: Vec<&DocItem> = items.iter().copied()
-        .filter(|i| matches!(i.kind, DocKind::Variable | DocKind::Macro | DocKind::Typedef)).collect();
+    let classes: Vec<&DocItem> = items
+        .iter()
+        .copied()
+        .filter(|i| matches!(i.kind, DocKind::Class | DocKind::Struct))
+        .collect();
+    let fns: Vec<&DocItem> = items
+        .iter()
+        .copied()
+        .filter(|i| matches!(i.kind, DocKind::Function | DocKind::Subroutine))
+        .collect();
+    let vars: Vec<&DocItem> = items
+        .iter()
+        .copied()
+        .filter(|i| {
+            matches!(
+                i.kind,
+                DocKind::Variable | DocKind::Macro | DocKind::Typedef
+            )
+        })
+        .collect();
 
     // Sub-namespaces: namespace entries whose name starts with `ns::` and has another `::` after.
     let sub_ns: Vec<String> = {
@@ -308,7 +370,9 @@ fn render_namespace_page(
                 let after = &item.name[ns.len() + 2..];
                 if let Some(p) = after.find("::") {
                     let sub = format!("{ns}::{}", &after[..p]);
-                    if !v.contains(&sub) { v.push(sub); }
+                    if !v.contains(&sub) {
+                        v.push(sub);
+                    }
                 }
             }
         }
@@ -329,11 +393,22 @@ fn render_namespace_page(
         let _ = writeln!(md, "## Types\n");
         md.push_str("| Name | Summary |\n|------|---------|\n");
         for item in &classes {
-            let simple = item.name.rfind("::").map(|p| &item.name[p+2..]).unwrap_or(&item.name);
+            let simple = item
+                .name
+                .rfind("::")
+                .map(|p| &item.name[p + 2..])
+                .unwrap_or(&item.name);
             let cls_slug = class_slug(&item.name);
-            let brief = md_table_escape(if item.brief.is_empty() { "—" } else { &item.brief });
-            let _ = writeln!(md, "| [{kind} `{simple}`](../class/{cls_slug}.md) | {brief} |",
-                kind = item.kind.label());
+            let brief = md_table_escape(if item.brief.is_empty() {
+                "—"
+            } else {
+                &item.brief
+            });
+            let _ = writeln!(
+                md,
+                "| [{kind} `{simple}`](../class/{cls_slug}.md) | {brief} |",
+                kind = item.kind.label()
+            );
         }
         let _ = writeln!(md);
     }
@@ -343,9 +418,21 @@ fn render_namespace_page(
         md.push_str("| Signature | Summary |\n|-----------|---------|\n");
         for item in &fns {
             let anchor = item_anchor_simple(item);
-            let simple = item.name.rfind("::").map(|p| &item.name[p+2..]).unwrap_or(&item.name);
-            let sig = if item.signature.is_empty() { simple.to_string() } else { item.display_signature() };
-            let brief = md_table_escape(if item.brief.is_empty() { "—" } else { &item.brief });
+            let simple = item
+                .name
+                .rfind("::")
+                .map(|p| &item.name[p + 2..])
+                .unwrap_or(&item.name);
+            let sig = if item.signature.is_empty() {
+                simple.to_string()
+            } else {
+                item.display_signature()
+            };
+            let brief = md_table_escape(if item.brief.is_empty() {
+                "—"
+            } else {
+                &item.brief
+            });
             let _ = writeln!(md, "| [`{sig}`](#{anchor}) | {brief} |");
         }
         let _ = writeln!(md);
@@ -356,9 +443,21 @@ fn render_namespace_page(
         md.push_str("| Name | Kind | Summary |\n|------|------|---------|\n");
         for item in &vars {
             let anchor = item_anchor_simple(item);
-            let simple = item.name.rfind("::").map(|p| &item.name[p+2..]).unwrap_or(&item.name);
-            let brief = md_table_escape(if item.brief.is_empty() { "—" } else { &item.brief });
-            let _ = writeln!(md, "| [`{simple}`](#{anchor}) | {} | {brief} |", item.kind.label());
+            let simple = item
+                .name
+                .rfind("::")
+                .map(|p| &item.name[p + 2..])
+                .unwrap_or(&item.name);
+            let brief = md_table_escape(if item.brief.is_empty() {
+                "—"
+            } else {
+                &item.brief
+            });
+            let _ = writeln!(
+                md,
+                "| [`{simple}`](#{anchor}) | {} | {brief} |",
+                item.kind.label()
+            );
         }
         let _ = writeln!(md);
     }
@@ -377,20 +476,18 @@ fn render_namespace_page(
 
 // ── Class pages ───────────────────────────────────────────────────────────────
 
-fn render_class_page(
-    cls: &str,
-    items: &[&DocItem],
-    sym: &SymbolIndex,
-    page: &str,
-) -> String {
+fn render_class_page(cls: &str, items: &[&DocItem], sym: &SymbolIndex, page: &str) -> String {
     let mut md = String::new();
     let depth_prefix = "../";
 
-    let simple = cls.rfind("::").map(|p| &cls[p+2..]).unwrap_or(cls);
+    let simple = cls.rfind("::").map(|p| &cls[p + 2..]).unwrap_or(cls);
     let ns = cls.rfind("::").map(|p| &cls[..p]);
 
     let _ = writeln!(md, "# class `{simple}`\n");
-    let _ = writeln!(md, "[← Index]({depth_prefix}index.md) | [All symbols]({depth_prefix}symbols.md)");
+    let _ = writeln!(
+        md,
+        "[← Index]({depth_prefix}index.md) | [All symbols]({depth_prefix}symbols.md)"
+    );
     if let Some(ns) = ns {
         let ns_slug = ns_slug(ns);
         let _ = writeln!(md, "**Namespace:** [`{ns}`](../namespace/{ns_slug}.md)");
@@ -398,22 +495,36 @@ fn render_class_page(
     let _ = writeln!(md, "\n---\n");
 
     // Class item (first element if kind is Class/Struct)
-    let class_items: Vec<&DocItem> = items.iter().copied()
-        .filter(|i| matches!(i.kind, DocKind::Class | DocKind::Struct) && i.name == cls).collect();
-    let members: Vec<&DocItem> = items.iter().copied()
-        .filter(|i| !(matches!(i.kind, DocKind::Class | DocKind::Struct) && i.name == cls)).collect();
+    let class_items: Vec<&DocItem> = items
+        .iter()
+        .copied()
+        .filter(|i| matches!(i.kind, DocKind::Class | DocKind::Struct) && i.name == cls)
+        .collect();
+    let members: Vec<&DocItem> = items
+        .iter()
+        .copied()
+        .filter(|i| !(matches!(i.kind, DocKind::Class | DocKind::Struct) && i.name == cls))
+        .collect();
 
     if let Some(cls_item) = class_items.first() {
-        if !cls_item.brief.is_empty() { let _ = writeln!(md, "{}\n", cls_item.brief); }
-        if !cls_item.body.is_empty()  { let _ = writeln!(md, "{}\n", cls_item.body); }
+        if !cls_item.brief.is_empty() {
+            let _ = writeln!(md, "{}\n", cls_item.brief);
+        }
+        if !cls_item.body.is_empty() {
+            let _ = writeln!(md, "{}\n", cls_item.body);
+        }
     }
 
     // Group members by kind/access
-    let pub_fns: Vec<&DocItem> = members.iter().copied()
+    let pub_fns: Vec<&DocItem> = members
+        .iter()
+        .copied()
         .filter(|i| matches!(i.kind, DocKind::Function | DocKind::Subroutine))
         .filter(|i| !matches!(i.meta.access, Some(super::extract::Access::Private)))
         .collect();
-    let pub_vars: Vec<&DocItem> = members.iter().copied()
+    let pub_vars: Vec<&DocItem> = members
+        .iter()
+        .copied()
         .filter(|i| matches!(i.kind, DocKind::Variable))
         .filter(|i| !matches!(i.meta.access, Some(super::extract::Access::Private)))
         .collect();
@@ -423,9 +534,21 @@ fn render_class_page(
         md.push_str("| Signature | Summary |\n|-----------|---------|\n");
         for item in &pub_fns {
             let anchor = item_anchor_simple(item);
-            let simple_name = item.name.rfind("::").map(|p| &item.name[p+2..]).unwrap_or(&item.name);
-            let sig = if item.signature.is_empty() { simple_name.to_string() } else { item.display_signature() };
-            let brief = md_table_escape(if item.brief.is_empty() { "—" } else { &item.brief });
+            let simple_name = item
+                .name
+                .rfind("::")
+                .map(|p| &item.name[p + 2..])
+                .unwrap_or(&item.name);
+            let sig = if item.signature.is_empty() {
+                simple_name.to_string()
+            } else {
+                item.display_signature()
+            };
+            let brief = md_table_escape(if item.brief.is_empty() {
+                "—"
+            } else {
+                &item.brief
+            });
             let _ = writeln!(md, "| [`{sig}`](#{anchor}) | {brief} |");
         }
         let _ = writeln!(md);
@@ -436,8 +559,16 @@ fn render_class_page(
         md.push_str("| Name | Summary |\n|------|---------|\n");
         for item in &pub_vars {
             let anchor = item_anchor_simple(item);
-            let simple_name = item.name.rfind("::").map(|p| &item.name[p+2..]).unwrap_or(&item.name);
-            let brief = md_table_escape(if item.brief.is_empty() { "—" } else { &item.brief });
+            let simple_name = item
+                .name
+                .rfind("::")
+                .map(|p| &item.name[p + 2..])
+                .unwrap_or(&item.name);
+            let brief = md_table_escape(if item.brief.is_empty() {
+                "—"
+            } else {
+                &item.brief
+            });
             let _ = writeln!(md, "| [`{simple_name}`](#{anchor}) | {brief} |");
         }
         let _ = writeln!(md);
@@ -457,35 +588,55 @@ fn render_class_page(
 
 // ── Fortran module pages ──────────────────────────────────────────────────────
 
-fn render_module_page(
-    mod_name: &str,
-    items: &[&DocItem],
-    sym: &SymbolIndex,
-    page: &str,
-) -> String {
+fn render_module_page(mod_name: &str, items: &[&DocItem], sym: &SymbolIndex, page: &str) -> String {
     let mut md = String::new();
     let depth_prefix = "../";
 
     let _ = writeln!(md, "# module `{mod_name}`\n");
-    let _ = writeln!(md, "[← Index]({depth_prefix}index.md) | [All symbols]({depth_prefix}symbols.md)\n");
+    let _ = writeln!(
+        md,
+        "[← Index]({depth_prefix}index.md) | [All symbols]({depth_prefix}symbols.md)\n"
+    );
     let _ = writeln!(md, "---\n");
 
     // Module declaration item
     if let Some(mod_item) = items.iter().find(|i| i.kind == DocKind::Module) {
-        if !mod_item.brief.is_empty() { let _ = writeln!(md, "{}\n", mod_item.brief); }
-        if !mod_item.body.is_empty()  { let _ = writeln!(md, "{}\n", mod_item.body); }
+        if !mod_item.brief.is_empty() {
+            let _ = writeln!(md, "{}\n", mod_item.brief);
+        }
+        if !mod_item.body.is_empty() {
+            let _ = writeln!(md, "{}\n", mod_item.body);
+        }
     }
 
-    let subs: Vec<_>  = items.iter().filter(|i| matches!(i.kind, DocKind::Subroutine | DocKind::Function)).collect();
-    let vars: Vec<_>  = items.iter().filter(|i| i.kind == DocKind::Variable).collect();
-    let types: Vec<_> = items.iter().filter(|i| matches!(i.kind, DocKind::Struct | DocKind::Typedef | DocKind::Interface)).collect();
+    let subs: Vec<_> = items
+        .iter()
+        .filter(|i| matches!(i.kind, DocKind::Subroutine | DocKind::Function))
+        .collect();
+    let vars: Vec<_> = items
+        .iter()
+        .filter(|i| i.kind == DocKind::Variable)
+        .collect();
+    let types: Vec<_> = items
+        .iter()
+        .filter(|i| {
+            matches!(
+                i.kind,
+                DocKind::Struct | DocKind::Typedef | DocKind::Interface
+            )
+        })
+        .collect();
 
     if !subs.is_empty() {
         let _ = writeln!(md, "## Procedures\n");
         md.push_str("| Name | Summary |\n|------|---------|\n");
         for item in &subs {
             let anchor = item_anchor_simple(item);
-            let brief = md_table_escape(if item.brief.is_empty() { "—" } else { &item.brief });
+            let brief = md_table_escape(if item.brief.is_empty() {
+                "—"
+            } else {
+                &item.brief
+            });
             let _ = writeln!(md, "| [`{}`](#{anchor}) | {brief} |", item.name);
         }
         let _ = writeln!(md);
@@ -496,7 +647,11 @@ fn render_module_page(
         md.push_str("| Name | Summary |\n|------|---------|\n");
         for item in &vars {
             let anchor = item_anchor_simple(item);
-            let brief = md_table_escape(if item.brief.is_empty() { "—" } else { &item.brief });
+            let brief = md_table_escape(if item.brief.is_empty() {
+                "—"
+            } else {
+                &item.brief
+            });
             let _ = writeln!(md, "| [`{}`](#{anchor}) | {brief} |", item.name);
         }
         let _ = writeln!(md);
@@ -507,7 +662,11 @@ fn render_module_page(
         md.push_str("| Name | Summary |\n|------|---------|\n");
         for item in &types {
             let anchor = item_anchor_simple(item);
-            let brief = md_table_escape(if item.brief.is_empty() { "—" } else { &item.brief });
+            let brief = md_table_escape(if item.brief.is_empty() {
+                "—"
+            } else {
+                &item.brief
+            });
             let _ = writeln!(md, "| [`{}`](#{anchor}) | {brief} |", item.name);
         }
         let _ = writeln!(md);
@@ -527,35 +686,58 @@ fn render_module_page(
 
 // ── Doxygen group pages ───────────────────────────────────────────────────────
 
-fn render_group_page(
-    group: &str,
-    items: &[&DocItem],
-    sym:   &SymbolIndex,
-    page:  &str,
-) -> String {
+fn render_group_page(group: &str, items: &[&DocItem], sym: &SymbolIndex, page: &str) -> String {
     let mut md = String::new();
     let depth_prefix = "../";
 
     let _ = writeln!(md, "# group `{group}`\n");
-    let _ = writeln!(md, "[← Index]({depth_prefix}index.md) | [All symbols]({depth_prefix}symbols.md)\n");
+    let _ = writeln!(
+        md,
+        "[← Index]({depth_prefix}index.md) | [All symbols]({depth_prefix}symbols.md)\n"
+    );
     let _ = writeln!(md, "---\n");
 
-    let fns: Vec<&DocItem> = items.iter().copied()
-        .filter(|i| matches!(i.kind, DocKind::Function | DocKind::Subroutine)).collect();
-    let types: Vec<&DocItem> = items.iter().copied()
-        .filter(|i| matches!(i.kind, DocKind::Class | DocKind::Struct | DocKind::Enum
-                                   | DocKind::Typedef | DocKind::Interface)).collect();
-    let vars: Vec<&DocItem> = items.iter().copied()
-        .filter(|i| matches!(i.kind, DocKind::Variable | DocKind::Macro)).collect();
+    let fns: Vec<&DocItem> = items
+        .iter()
+        .copied()
+        .filter(|i| matches!(i.kind, DocKind::Function | DocKind::Subroutine))
+        .collect();
+    let types: Vec<&DocItem> = items
+        .iter()
+        .copied()
+        .filter(|i| {
+            matches!(
+                i.kind,
+                DocKind::Class
+                    | DocKind::Struct
+                    | DocKind::Enum
+                    | DocKind::Typedef
+                    | DocKind::Interface
+            )
+        })
+        .collect();
+    let vars: Vec<&DocItem> = items
+        .iter()
+        .copied()
+        .filter(|i| matches!(i.kind, DocKind::Variable | DocKind::Macro))
+        .collect();
 
     if !types.is_empty() {
         let _ = writeln!(md, "## Types\n");
         md.push_str("| Name | Summary |\n|------|---------|\n");
         for item in &types {
             let anchor = item_anchor_simple(item);
-            let brief  = md_table_escape(if item.brief.is_empty() { "—" } else { &item.brief });
-            let _ = writeln!(md, "| [{kind} `{name}`](#{anchor}) | {brief} |",
-                kind = item.kind.label(), name = item.name);
+            let brief = md_table_escape(if item.brief.is_empty() {
+                "—"
+            } else {
+                &item.brief
+            });
+            let _ = writeln!(
+                md,
+                "| [{kind} `{name}`](#{anchor}) | {brief} |",
+                kind = item.kind.label(),
+                name = item.name
+            );
         }
         let _ = writeln!(md);
     }
@@ -565,8 +747,16 @@ fn render_group_page(
         md.push_str("| Signature | Summary |\n|-----------|---------|\n");
         for item in &fns {
             let anchor = item_anchor_simple(item);
-            let sig    = if item.signature.is_empty() { item.name.clone() } else { item.display_signature() };
-            let brief  = md_table_escape(if item.brief.is_empty() { "—" } else { &item.brief });
+            let sig = if item.signature.is_empty() {
+                item.name.clone()
+            } else {
+                item.display_signature()
+            };
+            let brief = md_table_escape(if item.brief.is_empty() {
+                "—"
+            } else {
+                &item.brief
+            });
             let _ = writeln!(md, "| [`{sig}`](#{anchor}) | {brief} |");
         }
         let _ = writeln!(md);
@@ -577,7 +767,11 @@ fn render_group_page(
         md.push_str("| Name | Summary |\n|------|---------|\n");
         for item in &vars {
             let anchor = item_anchor_simple(item);
-            let brief  = md_table_escape(if item.brief.is_empty() { "—" } else { &item.brief });
+            let brief = md_table_escape(if item.brief.is_empty() {
+                "—"
+            } else {
+                &item.brief
+            });
             let _ = writeln!(md, "| [`{}`](#{anchor}) | {brief} |", item.name);
         }
         let _ = writeln!(md);
@@ -671,7 +865,10 @@ fn render_symbol_index(by_file: &BTreeMap<String, Vec<&DocItem>>) -> String {
     let mut by_kind: BTreeMap<&'static str, Vec<(&str, &DocItem)>> = BTreeMap::new();
     for (rel, items) in by_file {
         for item in items.iter().filter(|item| !item.name.is_empty()) {
-            by_kind.entry(kind_title(&item.kind)).or_default().push((rel.as_str(), item));
+            by_kind
+                .entry(kind_title(&item.kind))
+                .or_default()
+                .push((rel.as_str(), item));
         }
     }
 
@@ -682,7 +879,10 @@ fn render_symbol_index(by_file: &BTreeMap<String, Vec<&DocItem>>) -> String {
 
     for (kind, mut symbols) in by_kind {
         symbols.sort_by(|(a_rel, a), (b_rel, b)| {
-            a.name.cmp(&b.name).then_with(|| a_rel.cmp(b_rel)).then_with(|| a.line.cmp(&b.line))
+            a.name
+                .cmp(&b.name)
+                .then_with(|| a_rel.cmp(b_rel))
+                .then_with(|| a.line.cmp(&b.line))
         });
 
         let _ = writeln!(md, "## {kind}\n");
@@ -691,7 +891,11 @@ fn render_symbol_index(by_file: &BTreeMap<String, Vec<&DocItem>>) -> String {
         for (rel, item) in symbols {
             let slug = rel_to_slug(rel);
             let anchor = symbol_anchor(item);
-            let summary = md_table_escape(if item.brief.is_empty() { "—" } else { &item.brief });
+            let summary = md_table_escape(if item.brief.is_empty() {
+                "—"
+            } else {
+                &item.brief
+            });
             let _ = writeln!(
                 md,
                 "| [{label} `{name}`]({slug}.md#{anchor}) | [{rel}]({slug}.md) | {line} | {summary} |",
@@ -707,8 +911,16 @@ fn render_symbol_index(by_file: &BTreeMap<String, Vec<&DocItem>>) -> String {
 }
 
 fn nav_tabs(active: &str) -> String {
-    let files   = if active == "Files"   { "**Files**".to_string()   } else { "[Files](index.md)".to_string() };
-    let symbols = if active == "Symbols" { "**Symbols**".to_string() } else { "[Symbols](symbols.md)".to_string() };
+    let files = if active == "Files" {
+        "**Files**".to_string()
+    } else {
+        "[Files](index.md)".to_string()
+    };
+    let symbols = if active == "Symbols" {
+        "**Symbols**".to_string()
+    } else {
+        "[Symbols](symbols.md)".to_string()
+    };
     format!("{files} | {symbols}\n\n")
 }
 
@@ -730,13 +942,20 @@ fn render_file_page(rel: &str, slug: &str, items: &[&DocItem]) -> String {
         let _ = writeln!(md, "## Contents\n");
         for item in &named {
             let anchor = symbol_anchor(item);
-            let _ = writeln!(md, "- [{kind} `{name}`](#{anchor})", kind = item.kind.label(), name = item.name);
+            let _ = writeln!(
+                md,
+                "- [{kind} `{name}`](#{anchor})",
+                kind = item.kind.label(),
+                name = item.name
+            );
         }
         let _ = writeln!(md);
         md.push_str("---\n\n");
     }
 
-    let dummy_sym = SymbolIndex { map: HashMap::new() };
+    let dummy_sym = SymbolIndex {
+        map: HashMap::new(),
+    };
     let page = format!("{}.md", rel_to_slug(rel));
     let mut name_count: BTreeMap<String, usize> = BTreeMap::new();
     for item in items {
@@ -750,14 +969,18 @@ fn render_file_page(rel: &str, slug: &str, items: &[&DocItem]) -> String {
 // ── Item renderer ─────────────────────────────────────────────────────────────
 
 fn render_item(
-    md:         &mut String,
-    item:       &DocItem,
+    md: &mut String,
+    item: &DocItem,
     name_count: &mut BTreeMap<String, usize>,
-    anchor:     &str,
-    sym:        &SymbolIndex,
-    page:       &str,
+    anchor: &str,
+    sym: &SymbolIndex,
+    page: &str,
 ) {
-    let simple_name = item.name.rfind("::").map(|p| &item.name[p+2..]).unwrap_or(&item.name);
+    let simple_name = item
+        .name
+        .rfind("::")
+        .map(|p| &item.name[p + 2..])
+        .unwrap_or(&item.name);
     let display = if item.name.is_empty() {
         "*(anonymous)*".to_string()
     } else {
@@ -766,7 +989,11 @@ fn render_item(
 
     let heading_base = format!("{} {display}", item.kind.label());
     let count = name_count.entry(item.name.clone()).or_insert(0);
-    let heading = if *count == 0 { heading_base } else { format!("{heading_base} ({})", *count + 1) };
+    let heading = if *count == 0 {
+        heading_base
+    } else {
+        format!("{heading_base} ({})", *count + 1)
+    };
     *count += 1;
 
     let _ = writeln!(md, "<a id=\"{anchor}\"></a>");
@@ -780,16 +1007,26 @@ fn render_item(
         let _ = writeln!(md, "```\n{}\n```\n", item.display_signature());
     }
 
-    if !item.brief.is_empty() { let _ = writeln!(md, "{}\n", item.brief); }
-    if !item.body.is_empty()  { let _ = writeln!(md, "{}\n", item.body); }
+    if !item.brief.is_empty() {
+        let _ = writeln!(md, "{}\n", item.brief);
+    }
+    if !item.body.is_empty() {
+        let _ = writeln!(md, "{}\n", item.body);
+    }
 
-    let params: Vec<&DocTag> = item.tags.iter().filter(|t| t.kind == TagKind::Param).collect();
+    let params: Vec<&DocTag> = item
+        .tags
+        .iter()
+        .filter(|t| t.kind == TagKind::Param)
+        .collect();
     if !params.is_empty() {
         render_parameter_table(md, &params);
     }
 
     for tag in &item.tags {
-        if matches!(tag.kind, TagKind::Param | TagKind::Brief) { continue; }
+        if matches!(tag.kind, TagKind::Param | TagKind::Brief) {
+            continue;
+        }
         let text = if tag.kind == TagKind::See {
             resolve_see(&tag.text, sym, page)
         } else {
@@ -802,7 +1039,9 @@ fn render_item(
 }
 
 fn render_parameter_table(md: &mut String, params: &[&DocTag]) {
-    md.push_str("<table style=\"border-collapse: collapse; margin: 0.75rem 0 1rem; font-size: 0.92em;\">\n");
+    md.push_str(
+        "<table style=\"border-collapse: collapse; margin: 0.75rem 0 1rem; font-size: 0.92em;\">\n",
+    );
     md.push_str("  <thead>\n");
     md.push_str("    <tr style=\"background: #eaf4ff; color: #0b3d68;\">\n");
     md.push_str("      <th style=\"border: 1px solid #b6d7f2; padding: 0.25rem 0.5rem; text-align: left;\">Parameter</th>\n");
@@ -827,12 +1066,12 @@ fn html_escape(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     for ch in text.chars() {
         match ch {
-            '&'  => out.push_str("&amp;"),
-            '<'  => out.push_str("&lt;"),
-            '>'  => out.push_str("&gt;"),
-            '"'  => out.push_str("&quot;"),
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
             '\'' => out.push_str("&#39;"),
-            _    => out.push(ch),
+            _ => out.push(ch),
         }
     }
     out
@@ -850,7 +1089,13 @@ fn class_slug(name: &str) -> String {
 
 fn group_slug(name: &str) -> String {
     name.chars()
-        .map(|c| if c.is_alphanumeric() || c == '_' { c.to_ascii_lowercase() } else { '_' })
+        .map(|c| {
+            if c.is_alphanumeric() || c == '_' {
+                c.to_ascii_lowercase()
+            } else {
+                '_'
+            }
+        })
         .collect::<String>()
         .split('_')
         .filter(|s| !s.is_empty())
@@ -860,7 +1105,11 @@ fn group_slug(name: &str) -> String {
 
 /// Stable anchor used by the symbol index (includes line for disambiguation).
 fn symbol_anchor(item: &DocItem) -> String {
-    let name = if item.name.is_empty() { "anonymous" } else { &item.name };
+    let name = if item.name.is_empty() {
+        "anonymous"
+    } else {
+        &item.name
+    };
     format!(
         "{}-{}-line-{}",
         item.kind.label(),
@@ -871,17 +1120,17 @@ fn symbol_anchor(item: &DocItem) -> String {
 
 fn kind_title(kind: &DocKind) -> &'static str {
     match kind {
-        DocKind::Function   => "Functions",
-        DocKind::Struct     => "Structs",
-        DocKind::Class      => "Classes",
-        DocKind::Enum       => "Enums",
-        DocKind::Typedef    => "Types",
-        DocKind::Variable   => "Variables",
-        DocKind::Macro      => "Macros",
-        DocKind::Module     => "Modules",
+        DocKind::Function => "Functions",
+        DocKind::Struct => "Structs",
+        DocKind::Class => "Classes",
+        DocKind::Enum => "Enums",
+        DocKind::Typedef => "Types",
+        DocKind::Variable => "Variables",
+        DocKind::Macro => "Macros",
+        DocKind::Module => "Modules",
         DocKind::Subroutine => "Subroutines",
-        DocKind::Interface  => "Interfaces",
-        DocKind::Unknown    => "Other items",
+        DocKind::Interface => "Interfaces",
+        DocKind::Unknown => "Other items",
     }
 }
 
@@ -899,10 +1148,18 @@ pub fn rel_to_slug(rel: &str) -> String {
 /// Derive a GFM-compatible heading anchor from kind + name.
 pub fn md_heading_anchor(kind: &str, name: &str) -> String {
     let raw = format!("{kind} {name}");
-    let lowered: String = raw.chars()
-        .map(|c| if c.is_alphanumeric() { c.to_ascii_lowercase() } else { '-' })
+    let lowered: String = raw
+        .chars()
+        .map(|c| {
+            if c.is_alphanumeric() {
+                c.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
         .collect();
-    lowered.split('-')
+    lowered
+        .split('-')
         .filter(|s| !s.is_empty())
         .collect::<Vec<_>>()
         .join("-")
@@ -910,8 +1167,8 @@ pub fn md_heading_anchor(kind: &str, name: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::super::extract::{DocLanguage, DocMeta};
     use super::*;
-    use super::super::extract::{DocMeta, DocLanguage};
 
     #[test]
     fn anchor_simple() {
@@ -920,7 +1177,10 @@ mod tests {
 
     #[test]
     fn anchor_camel() {
-        assert_eq!(md_heading_anchor("class", "OrderStatistics"), "class-orderstatistics");
+        assert_eq!(
+            md_heading_anchor("class", "OrderStatistics"),
+            "class-orderstatistics"
+        );
     }
 
     #[test]
@@ -938,7 +1198,10 @@ mod tests {
         let params: Vec<&DocTag> = tags.iter().collect();
         let mut md = String::new();
         render_parameter_table(&mut md, &params);
-        assert!(md.contains("<table style=\"border-collapse: collapse"), "{md}");
+        assert!(
+            md.contains("<table style=\"border-collapse: collapse"),
+            "{md}"
+        );
         assert!(md.contains("background: #eaf4ff"), "{md}");
         assert!(md.contains("<code>value</code>"), "{md}");
         assert!(md.contains("Input &lt;value&gt; &amp; scale."), "{md}");
@@ -965,7 +1228,10 @@ mod tests {
 
         assert!(md.contains("**Symbols**"), "{md}");
         assert!(md.contains("## Functions"), "{md}");
-        assert!(md.contains("[fn `add`](src_math_c.md#fn-add-line-7)"), "{md}");
+        assert!(
+            md.contains("[fn `add`](src_math_c.md#fn-add-line-7)"),
+            "{md}"
+        );
     }
 
     #[test]
@@ -992,22 +1258,34 @@ mod tests {
 
     #[test]
     fn relative_page_same_dir() {
-        assert_eq!(relative_page("namespace/stats.md", "namespace/stats__algo.md"), "stats__algo.md");
+        assert_eq!(
+            relative_page("namespace/stats.md", "namespace/stats__algo.md"),
+            "stats__algo.md"
+        );
     }
 
     #[test]
     fn relative_page_cross_dir() {
-        assert_eq!(relative_page("namespace/stats.md", "class/stats__orderstatistics.md"), "../class/stats__orderstatistics.md");
+        assert_eq!(
+            relative_page("namespace/stats.md", "class/stats__orderstatistics.md"),
+            "../class/stats__orderstatistics.md"
+        );
     }
 
     #[test]
     fn relative_page_to_root() {
-        assert_eq!(relative_page("namespace/stats.md", "index.md"), "../index.md");
+        assert_eq!(
+            relative_page("namespace/stats.md", "index.md"),
+            "../index.md"
+        );
     }
 
     #[test]
     fn relative_page_from_group() {
-        assert_eq!(relative_page("group/io.md", "namespace/fs.md"), "../namespace/fs.md");
+        assert_eq!(
+            relative_page("group/io.md", "namespace/fs.md"),
+            "../namespace/fs.md"
+        );
         assert_eq!(relative_page("group/io.md", "index.md"), "../index.md");
         assert_eq!(relative_page("group/io.md", "group/net.md"), "net.md");
     }
@@ -1016,7 +1294,7 @@ mod tests {
 
     #[test]
     fn group_slug_alphanumeric() {
-        assert_eq!(group_slug("io"),   "io");
+        assert_eq!(group_slug("io"), "io");
         assert_eq!(group_slug("core"), "core");
     }
 
@@ -1046,13 +1324,16 @@ mod tests {
             name: name.into(),
             kind,
             brief: "Brief.".into(),
-            body:  String::new(),
-            tags:  Vec::new(),
-            file:  Path::new("src/lib.c").to_path_buf(),
-            line:  1,
+            body: String::new(),
+            tags: Vec::new(),
+            file: Path::new("src/lib.c").to_path_buf(),
+            line: 1,
             lang,
             signature: String::new(),
-            meta: DocMeta { group: group.map(str::to_string), ..Default::default() },
+            meta: DocMeta {
+                group: group.map(str::to_string),
+                ..Default::default()
+            },
         }
     }
 
@@ -1061,22 +1342,33 @@ mod tests {
         let item = make_item("fopen", DocKind::Function, DocLanguage::C, Some("io"));
         let items = vec![item];
         let (groups, _) = group_items(&items, Path::new("."));
-        assert!(groups.groups.contains_key("io"),
-            "item with meta.group='io' should appear in groups['io']");
+        assert!(
+            groups.groups.contains_key("io"),
+            "item with meta.group='io' should appear in groups['io']"
+        );
         assert_eq!(groups.groups["io"].len(), 1);
     }
 
     #[test]
     fn grouped_cpp_item_also_appears_in_namespace() {
         // An item with both a namespace qualifier AND a group should land in both buckets.
-        let mut item = make_item("io::fopen", DocKind::Function, DocLanguage::Cpp, Some("posix"));
+        let mut item = make_item(
+            "io::fopen",
+            DocKind::Function,
+            DocLanguage::Cpp,
+            Some("posix"),
+        );
         item.file = Path::new("src/io.cpp").to_path_buf();
         let items = vec![item];
         let (groups, _) = group_items(&items, Path::new("."));
-        assert!(groups.groups.contains_key("posix"),
-            "grouped item should appear in groups['posix']");
-        assert!(groups.namespaces.contains_key("io"),
-            "namespace-qualified item should also appear in namespaces['io']");
+        assert!(
+            groups.groups.contains_key("posix"),
+            "grouped item should appear in groups['posix']"
+        );
+        assert!(
+            groups.namespaces.contains_key("io"),
+            "namespace-qualified item should also appear in namespaces['io']"
+        );
     }
 
     #[test]
@@ -1084,7 +1376,10 @@ mod tests {
         let item = make_item("malloc", DocKind::Function, DocLanguage::C, None);
         let items = vec![item];
         let (groups, _) = group_items(&items, Path::new("."));
-        assert!(groups.groups.is_empty(), "ungrouped item should not produce a groups entry");
+        assert!(
+            groups.groups.is_empty(),
+            "ungrouped item should not produce a groups entry"
+        );
     }
 
     #[test]
@@ -1092,11 +1387,15 @@ mod tests {
         let item = make_item("math::add", DocKind::Function, DocLanguage::Rust, None);
         let items = vec![item];
         let (groups, _) = group_items(&items, Path::new("."));
-        assert!(groups.namespaces.contains_key("math"),
+        assert!(
+            groups.namespaces.contains_key("math"),
             "Rust item with '::' should route to namespaces; got namespaces: {:?}",
-            groups.namespaces.keys().collect::<Vec<_>>());
-        assert!(groups.files.is_empty(),
-            "Rust scoped item should not fall through to files");
+            groups.namespaces.keys().collect::<Vec<_>>()
+        );
+        assert!(
+            groups.files.is_empty(),
+            "Rust scoped item should not fall through to files"
+        );
     }
 
     #[test]
@@ -1105,7 +1404,10 @@ mod tests {
         let items = vec![item];
         let (groups, _) = group_items(&items, Path::new("."));
         assert!(groups.namespaces.is_empty());
-        assert!(!groups.files.is_empty(), "unscoped Rust item should fall through to files");
+        assert!(
+            !groups.files.is_empty(),
+            "unscoped Rust item should fall through to files"
+        );
     }
 
     // ── render_group_page ─────────────────────────────────────────────────────
@@ -1113,7 +1415,9 @@ mod tests {
     #[test]
     fn group_page_contains_group_name() {
         let item = make_item("fopen", DocKind::Function, DocLanguage::C, Some("io"));
-        let dummy_sym = SymbolIndex { map: HashMap::new() };
+        let dummy_sym = SymbolIndex {
+            map: HashMap::new(),
+        };
         let md = render_group_page("io", &[&item], &dummy_sym, "group/io.md");
         assert!(md.contains("group `io`"), "{md}");
     }
@@ -1121,7 +1425,9 @@ mod tests {
     #[test]
     fn group_page_lists_function() {
         let item = make_item("fopen", DocKind::Function, DocLanguage::C, Some("io"));
-        let dummy_sym = SymbolIndex { map: HashMap::new() };
+        let dummy_sym = SymbolIndex {
+            map: HashMap::new(),
+        };
         let md = render_group_page("io", &[&item], &dummy_sym, "group/io.md");
         assert!(md.contains("## Functions"), "{md}");
         assert!(md.contains("fopen"), "{md}");
@@ -1130,7 +1436,9 @@ mod tests {
     #[test]
     fn group_page_lists_type() {
         let item = make_item("FILE", DocKind::Struct, DocLanguage::C, Some("io"));
-        let dummy_sym = SymbolIndex { map: HashMap::new() };
+        let dummy_sym = SymbolIndex {
+            map: HashMap::new(),
+        };
         let md = render_group_page("io", &[&item], &dummy_sym, "group/io.md");
         assert!(md.contains("## Types"), "{md}");
         assert!(md.contains("FILE"), "{md}");
@@ -1139,8 +1447,13 @@ mod tests {
     #[test]
     fn group_page_has_back_link() {
         let item = make_item("f", DocKind::Function, DocLanguage::C, Some("g"));
-        let dummy_sym = SymbolIndex { map: HashMap::new() };
+        let dummy_sym = SymbolIndex {
+            map: HashMap::new(),
+        };
         let md = render_group_page("g", &[&item], &dummy_sym, "group/g.md");
-        assert!(md.contains("../index.md"), "group page should link back to index: {md}");
+        assert!(
+            md.contains("../index.md"),
+            "group page should link back to index: {md}"
+        );
     }
 }

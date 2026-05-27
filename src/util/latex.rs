@@ -17,6 +17,13 @@ pub fn render_math_block(raw: &str) -> String {
 }
 
 pub fn render_math_block_with(raw: &str, mode: Mode) -> String {
+    #[cfg(feature = "libtexprintf")]
+    if mode == Mode::Unicode {
+        if let Ok(rendered) = libtexprintf::render(strip_delimiters(raw)) {
+            return rendered;
+        }
+    }
+
     render_one(strip_delimiters(raw), mode)
 }
 
@@ -35,7 +42,7 @@ pub fn render_math_lines_with(text: &str, mode: Mode) -> String {
     }
     let mut s = protected;
     for r in &regions {
-        let rendered = render_one(strip_delimiters(&r.raw), mode);
+        let rendered = render_math_block_with(&r.raw, mode);
         s = s.replace(&r.placeholder, &rendered);
     }
     s
@@ -60,7 +67,10 @@ fn render_one(src: &str, mode: Mode) -> String {
         return String::new();
     }
     let toks = lex(trimmed);
-    let mut p = Parser { toks: &toks, pos: 0 };
+    let mut p = Parser {
+        toks: &toks,
+        pos: 0,
+    };
     let expr = parse_expr(&mut p, 0);
     let (s, _) = render_expr(&expr, mode);
     s
@@ -74,22 +84,29 @@ enum Tok {
     Ident(String),
     Num(String),
     Op(String),
-    LBrace, RBrace,
-    LParen, RParen,
-    LBracket, RBracket,
-    Caret, Underscore,
+    LBrace,
+    RBrace,
+    LParen,
+    RParen,
+    LBracket,
+    RBracket,
+    Caret,
+    Underscore,
     Comma,
-    Amp,               // & (matrix cell sep)
-    RowSep,            // \\ (matrix row sep)
-    Prime,             // '
-    Pipe,              // | (abs)
-    DoubleVert,        // \| or \Vert (norm)
-    LFloor, RFloor,
-    LCeil, RCeil,
-    LAngle, RAngle,
-    Begin(String),     // \begin{env}
-    End(String),       // \end{env}
-    Text(String),      // \text{...} verbatim
+    Amp,        // & (matrix cell sep)
+    RowSep,     // \\ (matrix row sep)
+    Prime,      // '
+    Pipe,       // | (abs)
+    DoubleVert, // \| or \Vert (norm)
+    LFloor,
+    RFloor,
+    LCeil,
+    RCeil,
+    LAngle,
+    RAngle,
+    Begin(String), // \begin{env}
+    End(String),   // \end{env}
+    Text(String),  // \text{...} verbatim
 }
 
 fn lex(src: &str) -> Vec<Tok> {
@@ -125,13 +142,19 @@ fn lex(src: &str) -> Vec<Tok> {
                 match name.as_str() {
                     "left" | "right" | "quad" | "qquad" | "displaystyle" | "textstyle" => {}
                     "begin" | "end" => {
-                        while i < chars.len() && chars[i].is_whitespace() { i += 1; }
+                        while i < chars.len() && chars[i].is_whitespace() {
+                            i += 1;
+                        }
                         if chars.get(i) == Some(&'{') {
                             i += 1;
                             let env_start = i;
-                            while i < chars.len() && chars[i] != '}' { i += 1; }
+                            while i < chars.len() && chars[i] != '}' {
+                                i += 1;
+                            }
                             let env: String = chars[env_start..i].iter().collect();
-                            if chars.get(i) == Some(&'}') { i += 1; }
+                            if chars.get(i) == Some(&'}') {
+                                i += 1;
+                            }
                             if name == "begin" {
                                 toks.push(Tok::Begin(env));
                             } else {
@@ -140,20 +163,35 @@ fn lex(src: &str) -> Vec<Tok> {
                         }
                     }
                     "text" | "mbox" => {
-                        while i < chars.len() && chars[i].is_whitespace() { i += 1; }
+                        while i < chars.len() && chars[i].is_whitespace() {
+                            i += 1;
+                        }
                         if chars.get(i) == Some(&'{') {
                             i += 1;
                             let text_start = i;
                             let mut depth = 1;
                             while i < chars.len() && depth > 0 {
                                 match chars[i] {
-                                    '{' => { depth += 1; i += 1; }
-                                    '}' => { depth -= 1; if depth == 0 { break; } i += 1; }
-                                    _ => { i += 1; }
+                                    '{' => {
+                                        depth += 1;
+                                        i += 1;
+                                    }
+                                    '}' => {
+                                        depth -= 1;
+                                        if depth == 0 {
+                                            break;
+                                        }
+                                        i += 1;
+                                    }
+                                    _ => {
+                                        i += 1;
+                                    }
                                 }
                             }
                             let text: String = chars[text_start..i].iter().collect();
-                            if chars.get(i) == Some(&'}') { i += 1; }
+                            if chars.get(i) == Some(&'}') {
+                                i += 1;
+                            }
                             toks.push(Tok::Text(text));
                         } else {
                             toks.push(Tok::Cmd(name));
@@ -161,18 +199,19 @@ fn lex(src: &str) -> Vec<Tok> {
                     }
                     "lfloor" => toks.push(Tok::LFloor),
                     "rfloor" => toks.push(Tok::RFloor),
-                    "lceil"  => toks.push(Tok::LCeil),
-                    "rceil"  => toks.push(Tok::RCeil),
+                    "lceil" => toks.push(Tok::LCeil),
+                    "rceil" => toks.push(Tok::RCeil),
                     "langle" => toks.push(Tok::LAngle),
                     "rangle" => toks.push(Tok::RAngle),
-                    "Vert"   => toks.push(Tok::DoubleVert),
+                    "Vert" => toks.push(Tok::DoubleVert),
                     "vert" | "lvert" | "rvert" => toks.push(Tok::Pipe),
                     _ => toks.push(Tok::Cmd(name)),
                 }
             }
             continue;
         }
-        if c.is_ascii_digit() || (c == '.' && chars.get(i + 1).is_some_and(|n| n.is_ascii_digit())) {
+        if c.is_ascii_digit() || (c == '.' && chars.get(i + 1).is_some_and(|n| n.is_ascii_digit()))
+        {
             let start = i;
             while i < chars.len() && (chars[i].is_ascii_digit() || chars[i] == '.') {
                 i += 1;
@@ -250,14 +289,23 @@ enum Expr {
     Matrix(MatrixKind, Vec<Vec<Expr>>),
     Substack(Vec<Expr>),
     Not(Box<Expr>),
-    Bracketed(Box<Expr>),    // [ … ]
-    Tuple(Vec<Expr>),        // ( a, b, c )
+    Bracketed(Box<Expr>), // [ … ]
+    Tuple(Vec<Expr>),     // ( a, b, c )
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum BigOpKind {
-    Sum, Prod, Int,
-    BigCup, BigCap, BigOplus, BigOtimes, BigVee, BigWedge, BigUplus, BigSqcup,
+    Sum,
+    Prod,
+    Int,
+    BigCup,
+    BigCap,
+    BigOplus,
+    BigOtimes,
+    BigVee,
+    BigWedge,
+    BigUplus,
+    BigSqcup,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -267,41 +315,100 @@ struct Bounds {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum MatrixKind { Pmatrix, Bmatrix, Vmatrix, VMatrix, BMatrix, Matrix, Cases, Aligned }
+enum MatrixKind {
+    Pmatrix,
+    Bmatrix,
+    Vmatrix,
+    VMatrix,
+    BMatrix,
+    Matrix,
+    Cases,
+    Aligned,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum BinOp {
-    Add, Sub, Mul, Div, Cdot, Times,
-    Eq, Lt, Gt, Le, Ge, Ne, Approx, To,
-    Pm, Mp,
-    In, Subset, Cup, Cap,
-    Equiv, Propto, Circ, Ast, Bmod,
-    Subseteq, Supseteq, Supset, Subsetneq, Setminus,
-    Ll, Gg,
-    Perp, Parallel,
-    Mid, Nmid,
-    Wedge, Vee,
-    Oplus, Otimes, Odot, Ominus,
-    Nleq, Ngeq, Nsubseteq, Notin,
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Cdot,
+    Times,
+    Eq,
+    Lt,
+    Gt,
+    Le,
+    Ge,
+    Ne,
+    Approx,
+    To,
+    Pm,
+    Mp,
+    In,
+    Subset,
+    Cup,
+    Cap,
+    Equiv,
+    Propto,
+    Circ,
+    Ast,
+    Bmod,
+    Subseteq,
+    Supseteq,
+    Supset,
+    Subsetneq,
+    Setminus,
+    Ll,
+    Gg,
+    Perp,
+    Parallel,
+    Mid,
+    Nmid,
+    Wedge,
+    Vee,
+    Oplus,
+    Otimes,
+    Odot,
+    Ominus,
+    Nleq,
+    Ngeq,
+    Nsubseteq,
+    Notin,
     Bullet,
     // Order / similarity
-    Precedes, Succeeds, Preceq, Succeq,
-    Sqsubseteq, Sqsupseteq,
-    Cong, Simeq, Asymp,
+    Precedes,
+    Succeeds,
+    Preceq,
+    Succeq,
+    Sqsubseteq,
+    Sqsupseteq,
+    Cong,
+    Simeq,
+    Asymp,
     // Lattice / multiset ops
-    Sqcup, Sqcap, Uplus,
-    Amalg, Wr,
+    Sqcup,
+    Sqcap,
+    Uplus,
+    Amalg,
+    Wr,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-enum Prec { Rel, Add, Mul, Unary, Pow, Atom }
+enum Prec {
+    Rel,
+    Add,
+    Mul,
+    Unary,
+    Pow,
+    Atom,
+}
 
 fn op_prec(op: BinOp) -> Prec {
     use BinOp::*;
     match op {
         Add | Sub | Pm | Mp | Oplus | Ominus | Sqcup | Sqcap | Uplus => Prec::Add,
-        Mul | Div | Cdot | Times | Circ | Ast | Bmod | Otimes | Odot | Bullet
-        | Wedge | Vee | Setminus | Amalg | Wr => Prec::Mul,
+        Mul | Div | Cdot | Times | Circ | Ast | Bmod | Otimes | Odot | Bullet | Wedge | Vee
+        | Setminus | Amalg | Wr => Prec::Mul,
         _ => Prec::Rel,
     }
 }
@@ -309,15 +416,14 @@ fn op_prec(op: BinOp) -> Prec {
 fn op_bp(op: BinOp) -> (u8, u8) {
     use BinOp::*;
     match op {
-        Eq | Lt | Gt | Le | Ge | Ne | Approx | To | Equiv | Propto
-        | In | Notin | Subset | Subseteq | Supset | Supseteq | Subsetneq | Nsubseteq
-        | Mid | Nmid | Perp | Parallel | Ll | Gg | Nleq | Ngeq
-        | Precedes | Succeeds | Preceq | Succeq | Sqsubseteq | Sqsupseteq
-        | Cong | Simeq | Asymp => (10, 11),
+        Eq | Lt | Gt | Le | Ge | Ne | Approx | To | Equiv | Propto | In | Notin | Subset
+        | Subseteq | Supset | Supseteq | Subsetneq | Nsubseteq | Mid | Nmid | Perp | Parallel
+        | Ll | Gg | Nleq | Ngeq | Precedes | Succeeds | Preceq | Succeq | Sqsubseteq
+        | Sqsupseteq | Cong | Simeq | Asymp => (10, 11),
         Cup | Cap | Sqcup | Sqcap | Uplus => (20, 21),
         Add | Sub | Pm | Mp | Oplus | Ominus => (30, 31),
-        Mul | Div | Cdot | Times | Circ | Ast | Bmod | Otimes | Odot | Bullet
-        | Wedge | Vee | Setminus | Amalg | Wr => (40, 41),
+        Mul | Div | Cdot | Times | Circ | Ast | Bmod | Otimes | Odot | Bullet | Wedge | Vee
+        | Setminus | Amalg | Wr => (40, 41),
     }
 }
 
@@ -407,10 +513,8 @@ fn matrix_kind_from(name: &str) -> MatrixKind {
         "Vmatrix" => MatrixKind::VMatrix,
         "Bmatrix" => MatrixKind::BMatrix,
         "cases" | "dcases" | "rcases" => MatrixKind::Cases,
-        "align" | "align*" | "aligned"
-        | "gather" | "gather*" | "gathered"
-        | "eqnarray" | "eqnarray*" | "split"
-        | "equation" | "equation*" | "multline" | "multline*"
+        "align" | "align*" | "aligned" | "gather" | "gather*" | "gathered" | "eqnarray"
+        | "eqnarray*" | "split" | "equation" | "equation*" | "multline" | "multline*"
         | "subarray" => MatrixKind::Aligned,
         "smallmatrix" | "array" => MatrixKind::Matrix,
         _ => MatrixKind::Matrix,
@@ -425,14 +529,23 @@ struct Parser<'a> {
 }
 
 impl<'a> Parser<'a> {
-    fn peek(&self) -> Option<&Tok> { self.toks.get(self.pos) }
+    fn peek(&self) -> Option<&Tok> {
+        self.toks.get(self.pos)
+    }
     fn bump(&mut self) -> Option<Tok> {
         let t = self.toks.get(self.pos).cloned();
-        if t.is_some() { self.pos += 1; }
+        if t.is_some() {
+            self.pos += 1;
+        }
         t
     }
     fn eat(&mut self, t: &Tok) -> bool {
-        if self.peek() == Some(t) { self.pos += 1; true } else { false }
+        if self.peek() == Some(t) {
+            self.pos += 1;
+            true
+        } else {
+            false
+        }
     }
 }
 
@@ -446,7 +559,9 @@ fn parse_expr(p: &mut Parser, min_bp: u8) -> Expr {
         };
         let Some(op) = op else { break };
         let (lbp, rbp) = op_bp(op);
-        if lbp < min_bp { break; }
+        if lbp < min_bp {
+            break;
+        }
         p.bump();
         let right = parse_expr(p, rbp);
         left = Expr::Bin(op, Box::new(left), Box::new(right));
@@ -457,8 +572,14 @@ fn parse_expr(p: &mut Parser, min_bp: u8) -> Expr {
 fn parse_unary(p: &mut Parser) -> Expr {
     if let Some(Tok::Op(s)) = p.peek() {
         match s.as_str() {
-            "-" => { p.bump(); return Expr::Neg(Box::new(parse_unary(p))); }
-            "+" => { p.bump(); return parse_unary(p); }
+            "-" => {
+                p.bump();
+                return Expr::Neg(Box::new(parse_unary(p)));
+            }
+            "+" => {
+                p.bump();
+                return parse_unary(p);
+            }
             _ => {}
         }
     }
@@ -496,7 +617,10 @@ fn parse_scripted(p: &mut Parser) -> Expr {
                 let sub = parse_atom_or_group(p);
                 base = Expr::Sub(Box::new(base), Box::new(sub));
             }
-            Some(Tok::Prime) => { p.bump(); primes += 1; }
+            Some(Tok::Prime) => {
+                p.bump();
+                primes += 1;
+            }
             _ => break,
         }
     }
@@ -513,12 +637,26 @@ fn parse_atom_or_group(p: &mut Parser) -> Expr {
 fn parse_atom(p: &mut Parser) -> Expr {
     // Peek-then-bump: unrecognised tokens stay in the stream so outer parsers
     // (matrix body, abs/norm close, end-of-environment) can match them.
-    let Some(t) = p.peek().cloned() else { return Expr::Empty };
+    let Some(t) = p.peek().cloned() else {
+        return Expr::Empty;
+    };
     match t {
-        Tok::Num(n) => { p.bump(); Expr::Atom(n) }
-        Tok::Ident(s) => { p.bump(); Expr::Atom(s) }
-        Tok::Cmd(c) => { p.bump(); parse_command(p, &c) }
-        Tok::Text(s) => { p.bump(); Expr::Text(s) }
+        Tok::Num(n) => {
+            p.bump();
+            Expr::Atom(n)
+        }
+        Tok::Ident(s) => {
+            p.bump();
+            Expr::Atom(s)
+        }
+        Tok::Cmd(c) => {
+            p.bump();
+            parse_command(p, &c)
+        }
+        Tok::Text(s) => {
+            p.bump();
+            Expr::Text(s)
+        }
         Tok::LBrace => {
             p.bump();
             let inner = parse_expr(p, 0);
@@ -591,7 +729,9 @@ fn parse_atom(p: &mut Parser) -> Expr {
             // brace group that is layout-only; discard it before parsing content.
             if env == "array" || env == "subarray" {
                 if p.eat(&Tok::LBrace) {
-                    while !matches!(p.peek(), Some(Tok::RBrace) | None) { p.bump(); }
+                    while !matches!(p.peek(), Some(Tok::RBrace) | None) {
+                        p.bump();
+                    }
                     p.eat(&Tok::RBrace);
                 }
             }
@@ -614,8 +754,8 @@ fn parse_command(p: &mut Parser, name: &str) -> Expr {
             let k = parse_brace_group(p);
             Expr::Binom(Box::new(n), Box::new(k))
         }
-        "bar" | "hat" | "vec" | "tilde" | "dot" | "ddot"
-        | "overline" | "underline" | "widehat" | "widetilde" | "overrightarrow" => {
+        "bar" | "hat" | "vec" | "tilde" | "dot" | "ddot" | "overline" | "underline" | "widehat"
+        | "widetilde" | "overrightarrow" => {
             let arg = parse_brace_group(p);
             let canonical = match name {
                 "widehat" => "hat",
@@ -638,7 +778,9 @@ fn parse_command(p: &mut Parser, name: &str) -> Expr {
             let inner = parse_brace_group(p);
             if let Expr::Atom(c) = &inner {
                 let mapped: String = c.chars().map(|ch| script_char(ch).unwrap_or(ch)).collect();
-                if mapped != *c { return Expr::Atom(mapped); }
+                if mapped != *c {
+                    return Expr::Atom(mapped);
+                }
             }
             inner
         }
@@ -646,12 +788,13 @@ fn parse_command(p: &mut Parser, name: &str) -> Expr {
             let inner = parse_brace_group(p);
             if let Expr::Atom(c) = &inner {
                 let mapped: String = c.chars().map(|ch| fraktur_char(ch).unwrap_or(ch)).collect();
-                if mapped != *c { return Expr::Atom(mapped); }
+                if mapped != *c {
+                    return Expr::Atom(mapped);
+                }
             }
             inner
         }
-        "mathbf" | "mathit" | "mathrm" | "boldsymbol" | "mathsf" | "mathtt"
-        | "operatorname" => {
+        "mathbf" | "mathit" | "mathrm" | "boldsymbol" | "mathsf" | "mathtt" | "operatorname" => {
             parse_brace_group(p)
         }
         "pmod" => {
@@ -666,31 +809,39 @@ fn parse_command(p: &mut Parser, name: &str) -> Expr {
             let body = parse_brace_group(p);
             Expr::Sqrt(Box::new(body))
         }
-        "sum" | "prod" | "int" | "iint" | "iiint" | "oint"
-        | "bigcup" | "bigcap" | "bigoplus" | "bigotimes"
-        | "bigvee" | "bigwedge" | "biguplus" | "bigsqcup" => {
+        "sum" | "prod" | "int" | "iint" | "iiint" | "oint" | "bigcup" | "bigcap" | "bigoplus"
+        | "bigotimes" | "bigvee" | "bigwedge" | "biguplus" | "bigsqcup" => {
             let kind = match name {
-                "sum"      => BigOpKind::Sum,
-                "prod"     => BigOpKind::Prod,
-                "bigcup"   => BigOpKind::BigCup,
-                "bigcap"   => BigOpKind::BigCap,
+                "sum" => BigOpKind::Sum,
+                "prod" => BigOpKind::Prod,
+                "bigcup" => BigOpKind::BigCup,
+                "bigcap" => BigOpKind::BigCap,
                 "bigoplus" => BigOpKind::BigOplus,
-                "bigotimes"=> BigOpKind::BigOtimes,
-                "bigvee"   => BigOpKind::BigVee,
+                "bigotimes" => BigOpKind::BigOtimes,
+                "bigvee" => BigOpKind::BigVee,
                 "bigwedge" => BigOpKind::BigWedge,
                 "biguplus" => BigOpKind::BigUplus,
                 "bigsqcup" => BigOpKind::BigSqcup,
-                _          => BigOpKind::Int,
+                _ => BigOpKind::Int,
             };
             let (mut pre_sup, mut pre_sub) = (None, None);
             for _ in 0..2 {
                 match p.peek() {
-                    Some(Tok::Underscore) => { p.bump(); pre_sub = Some(Box::new(parse_atom_or_group(p))); }
-                    Some(Tok::Caret) => { p.bump(); pre_sup = Some(Box::new(parse_atom_or_group(p))); }
+                    Some(Tok::Underscore) => {
+                        p.bump();
+                        pre_sub = Some(Box::new(parse_atom_or_group(p)));
+                    }
+                    Some(Tok::Caret) => {
+                        p.bump();
+                        pre_sup = Some(Box::new(parse_atom_or_group(p)));
+                    }
                     _ => break,
                 }
             }
-            let bounds = Bounds { lower: pre_sub, upper: pre_sup };
+            let bounds = Bounds {
+                lower: pre_sub,
+                upper: pre_sup,
+            };
             let body = parse_bigop_body(p);
             let (body, diff) = if matches!(kind, BigOpKind::Int) {
                 extract_differential(body)
@@ -699,25 +850,33 @@ fn parse_command(p: &mut Parser, name: &str) -> Expr {
             };
             Expr::BigOp(kind, bounds, Box::new(body), diff)
         }
-        "sin" | "cos" | "tan" | "cot" | "sec" | "csc"
-        | "arcsin" | "arccos" | "arctan"
-        | "sinh" | "cosh" | "tanh"
-        | "log" | "ln" | "exp" | "lim" | "liminf" | "limsup" | "min" | "max" | "det"
-        | "gcd" | "lcm" | "arg" | "dim" | "ker" | "deg"
-        | "sup" | "inf" | "sgn" | "Pr" | "hom" | "im" | "re" | "ord" => {
+        "sin" | "cos" | "tan" | "cot" | "sec" | "csc" | "arcsin" | "arccos" | "arctan" | "sinh"
+        | "cosh" | "tanh" | "log" | "ln" | "exp" | "lim" | "liminf" | "limsup" | "min" | "max"
+        | "det" | "gcd" | "lcm" | "arg" | "dim" | "ker" | "deg" | "sup" | "inf" | "sgn" | "Pr"
+        | "hom" | "im" | "re" | "ord" => {
             let mut sup = None;
             let mut sub = None;
             loop {
                 match p.peek() {
-                    Some(Tok::Caret) => { p.bump(); sup = Some(parse_atom_or_group(p)); }
-                    Some(Tok::Underscore) => { p.bump(); sub = Some(parse_atom_or_group(p)); }
+                    Some(Tok::Caret) => {
+                        p.bump();
+                        sup = Some(parse_atom_or_group(p));
+                    }
+                    Some(Tok::Underscore) => {
+                        p.bump();
+                        sub = Some(parse_atom_or_group(p));
+                    }
                     _ => break,
                 }
             }
             let arg = parse_scripted(p);
             let mut e = Expr::Call(name.to_string(), Box::new(arg));
-            if let Some(s) = sub { e = Expr::Sub(Box::new(e), Box::new(s)); }
-            if let Some(s) = sup { e = Expr::Pow(Box::new(e), Box::new(s)); }
+            if let Some(s) = sub {
+                e = Expr::Sub(Box::new(e), Box::new(s));
+            }
+            if let Some(s) = sup {
+                e = Expr::Pow(Box::new(e), Box::new(s));
+            }
             e
         }
         // Stacked relations.
@@ -737,9 +896,8 @@ fn parse_command(p: &mut Parser, name: &str) -> Expr {
         "substack" => parse_substack(p),
         "neg" | "lnot" => Expr::Not(Box::new(parse_scripted(p))),
         // Delimiter size prefixes — drop; the following delimiter parses normally.
-        "big" | "Big" | "bigg" | "Bigg"
-        | "bigl" | "bigr" | "Bigl" | "Bigr"
-        | "biggl" | "biggr" | "Biggl" | "Biggr" => Expr::Empty,
+        "big" | "Big" | "bigg" | "Bigg" | "bigl" | "bigr" | "Bigl" | "Bigr" | "biggl" | "biggr"
+        | "Biggl" | "Biggr" => Expr::Empty,
         // Invisible spacing/sizing — consume the brace group and emit nothing.
         "phantom" | "hphantom" | "vphantom" | "smash" | "mathstrut" => {
             let _ = parse_brace_group(p);
@@ -757,11 +915,16 @@ fn parse_substack(p: &mut Parser) -> Expr {
     loop {
         match p.peek() {
             Some(Tok::RBrace) | None => break,
-            Some(Tok::Comma) | Some(Tok::RowSep) => { p.bump(); }
+            Some(Tok::Comma) | Some(Tok::RowSep) => {
+                p.bump();
+            }
             _ => {
                 let e = parse_expr(p, 0);
-                if matches!(e, Expr::Empty) { p.bump(); }
-                else { items.push(e); }
+                if matches!(e, Expr::Empty) {
+                    p.bump();
+                } else {
+                    items.push(e);
+                }
             }
         }
     }
@@ -794,18 +957,30 @@ fn parse_bigop_body(p: &mut Parser) -> Expr {
     while is_juxt_start(p.peek()) {
         items.push(parse_scripted(p));
     }
-    if items.len() == 1 { items.pop().unwrap() } else { Expr::Juxt(items) }
+    if items.len() == 1 {
+        items.pop().unwrap()
+    } else {
+        Expr::Juxt(items)
+    }
 }
 
 fn extract_differential(body: Expr) -> (Expr, Option<String>) {
-    let Expr::Juxt(mut items) = body else { return (body, None) };
-    if items.len() < 2 { return (Expr::Juxt(items), None); }
+    let Expr::Juxt(mut items) = body else {
+        return (body, None);
+    };
+    if items.len() < 2 {
+        return (Expr::Juxt(items), None);
+    }
     let (last, second_last) = (&items[items.len() - 1], &items[items.len() - 2]);
     if let (Expr::Atom(d), Expr::Atom(v)) = (second_last, last) {
         if d == "d" {
             let var = v.clone();
             items.truncate(items.len() - 2);
-            let new_body = if items.len() == 1 { items.pop().unwrap() } else { Expr::Juxt(items) };
+            let new_body = if items.len() == 1 {
+                items.pop().unwrap()
+            } else {
+                Expr::Juxt(items)
+            };
             return (new_body, Some(format!("d{var}")));
         }
     }
@@ -814,9 +989,8 @@ fn extract_differential(body: Expr) -> (Expr, Option<String>) {
 
 fn is_juxt_start(t: Option<&Tok>) -> bool {
     match t {
-        Some(Tok::Ident(_)) | Some(Tok::Num(_))
-        | Some(Tok::LParen) | Some(Tok::LBrace) | Some(Tok::LBracket)
-        | Some(Tok::LFloor) | Some(Tok::LCeil) | Some(Tok::LAngle)
+        Some(Tok::Ident(_)) | Some(Tok::Num(_)) | Some(Tok::LParen) | Some(Tok::LBrace)
+        | Some(Tok::LBracket) | Some(Tok::LFloor) | Some(Tok::LCeil) | Some(Tok::LAngle)
         | Some(Tok::Begin(_)) | Some(Tok::Text(_)) => true,
         // Pipe/DoubleVert excluded — they open AND close, so juxt would mis-pair them.
         Some(Tok::Cmd(s)) => bin_from_cmd(s).is_none(),
@@ -829,7 +1003,9 @@ fn parse_matrix_body(p: &mut Parser, kind: MatrixKind) -> Expr {
     loop {
         match p.peek() {
             None | Some(Tok::End(_)) => break,
-            Some(Tok::Amp) => { p.bump(); }
+            Some(Tok::Amp) => {
+                p.bump();
+            }
             Some(Tok::RowSep) => {
                 p.bump();
                 rows.push(Vec::new());
@@ -882,15 +1058,27 @@ fn render_expr(e: &Expr, mode: Mode) -> (String, Prec) {
         Expr::Juxt(items) => render_juxt(items, mode),
         Expr::Abs(x) => render_delim_pair(x, "|", "|", mode),
         Expr::Norm(x) => {
-            let (open, close) = if mode == Mode::Unicode { ("‖", "‖") } else { ("||", "||") };
+            let (open, close) = if mode == Mode::Unicode {
+                ("‖", "‖")
+            } else {
+                ("||", "||")
+            };
             render_delim_pair(x, open, close, mode)
         }
         Expr::Floor(x) => {
-            let (open, close) = if mode == Mode::Unicode { ("⌊", "⌋") } else { ("floor(", ")") };
+            let (open, close) = if mode == Mode::Unicode {
+                ("⌊", "⌋")
+            } else {
+                ("floor(", ")")
+            };
             render_delim_pair(x, open, close, mode)
         }
         Expr::Ceil(x) => {
-            let (open, close) = if mode == Mode::Unicode { ("⌈", "⌉") } else { ("ceil(", ")") };
+            let (open, close) = if mode == Mode::Unicode {
+                ("⌈", "⌉")
+            } else {
+                ("ceil(", ")")
+            };
             render_delim_pair(x, open, close, mode)
         }
         Expr::Inner(items) => render_inner(items, mode),
@@ -909,9 +1097,11 @@ fn render_expr(e: &Expr, mode: Mode) -> (String, Prec) {
         Expr::Bracketed(inner) => {
             // Comma-list inside [] (e.g. [a,b] interval): render items without extra parens.
             let s = match inner.as_ref() {
-                Expr::Tuple(items) => {
-                    items.iter().map(|e| render_expr(e, mode).0).collect::<Vec<_>>().join(", ")
-                }
+                Expr::Tuple(items) => items
+                    .iter()
+                    .map(|e| render_expr(e, mode).0)
+                    .collect::<Vec<_>>()
+                    .join(", "),
                 _ => render_expr(inner, mode).0,
             };
             (format!("[{s}]"), Prec::Atom)
@@ -924,7 +1114,11 @@ fn render_expr(e: &Expr, mode: Mode) -> (String, Prec) {
 }
 
 fn wrap(s: String, child: Prec, parent: Prec) -> String {
-    if child < parent { format!("({s})") } else { s }
+    if child < parent {
+        format!("({s})")
+    } else {
+        s
+    }
 }
 
 fn render_bin(op: BinOp, a: &Expr, b: &Expr, mode: Mode) -> (String, Prec) {
@@ -934,7 +1128,11 @@ fn render_bin(op: BinOp, a: &Expr, b: &Expr, mode: Mode) -> (String, Prec) {
     let sa = wrap(sa, pa, here);
     let sb = match op {
         BinOp::Sub | BinOp::Div => {
-            if pb <= here { format!("({sb})") } else { sb }
+            if pb <= here {
+                format!("({sb})")
+            } else {
+                sb
+            }
         }
         _ => wrap(sb, pb, here),
     };
@@ -944,33 +1142,53 @@ fn render_bin(op: BinOp, a: &Expr, b: &Expr, mode: Mode) -> (String, Prec) {
 fn render_pow(base: &Expr, exp: &Expr, mode: Mode) -> (String, Prec) {
     let (sb, pb) = render_expr(base, mode);
     // Strict: nested Pow/Sub/Call in the base need parens to disambiguate.
-    let sb = if pb < Prec::Atom { format!("({sb})") } else { sb };
+    let sb = if pb < Prec::Atom {
+        format!("({sb})")
+    } else {
+        sb
+    };
     let (se, pe) = render_expr(exp, mode);
     if mode == Mode::Unicode {
         if let Some(sup) = to_superscript(&se) {
             return (format!("{sb}{sup}"), Prec::Pow);
         }
     }
-    let exp_str = if pe >= Prec::Pow { se } else { format!("({se})") };
+    let exp_str = if pe >= Prec::Pow {
+        se
+    } else {
+        format!("({se})")
+    };
     (format!("{sb}^{exp_str}"), Prec::Pow)
 }
 
 fn render_sub(base: &Expr, sub: &Expr, mode: Mode) -> (String, Prec) {
     let (sb, pb) = render_expr(base, mode);
-    let sb = if pb < Prec::Atom { format!("({sb})") } else { sb };
+    let sb = if pb < Prec::Atom {
+        format!("({sb})")
+    } else {
+        sb
+    };
     let (ss, ps) = render_expr(sub, mode);
     if mode == Mode::Unicode {
         if let Some(sub_uni) = to_subscript(&ss) {
             return (format!("{sb}{sub_uni}"), Prec::Pow);
         }
     }
-    let sub_str = if ps >= Prec::Pow { ss } else { format!("({ss})") };
+    let sub_str = if ps >= Prec::Pow {
+        ss
+    } else {
+        format!("({ss})")
+    };
     (format!("{sb}_{sub_str}"), Prec::Pow)
 }
 
 fn render_primed(base: &Expr, n: usize, mode: Mode) -> (String, Prec) {
     let (sb, pb) = render_expr(base, mode);
-    let sb = if pb < Prec::Atom { format!("({sb})") } else { sb };
+    let sb = if pb < Prec::Atom {
+        format!("({sb})")
+    } else {
+        sb
+    };
     let suffix = match (mode, n) {
         (_, 0) => String::new(),
         (Mode::Unicode, 1) => "′".into(),
@@ -988,8 +1206,16 @@ fn render_frac(n: &Expr, d: &Expr, mode: Mode) -> (String, Prec) {
     let (sd, pd) = render_expr(d, mode);
     let sym = if mode == Mode::Unicode { "÷" } else { "/" };
     // Strict on both sides so adjacent ÷ never becomes ambiguous.
-    let sn = if pn <= Prec::Mul { format!("({sn})") } else { sn };
-    let sd = if pd <= Prec::Mul { format!("({sd})") } else { sd };
+    let sn = if pn <= Prec::Mul {
+        format!("({sn})")
+    } else {
+        sn
+    };
+    let sd = if pd <= Prec::Mul {
+        format!("({sd})")
+    } else {
+        sd
+    };
     (format!("{sn} {sym} {sd}"), Prec::Mul)
 }
 
@@ -1004,7 +1230,13 @@ fn render_sqrt(x: &Expr, mode: Mode) -> (String, Prec) {
     (out, Prec::Atom)
 }
 
-fn render_bigop(kind: BigOpKind, b: &Bounds, body: &Expr, diff: Option<&str>, mode: Mode) -> (String, Prec) {
+fn render_bigop(
+    kind: BigOpKind,
+    b: &Bounds,
+    body: &Expr,
+    diff: Option<&str>,
+    mode: Mode,
+) -> (String, Prec) {
     let sym = match (kind, mode) {
         (BigOpKind::Sum, Mode::Unicode) => "∑",
         (BigOpKind::Sum, Mode::Ascii) => "sum",
@@ -1012,26 +1244,30 @@ fn render_bigop(kind: BigOpKind, b: &Bounds, body: &Expr, diff: Option<&str>, mo
         (BigOpKind::Prod, Mode::Ascii) => "prod",
         (BigOpKind::Int, Mode::Unicode) => "∫",
         (BigOpKind::Int, Mode::Ascii) => "int",
-        (BigOpKind::BigCup,   Mode::Unicode) => "⋃",
-        (BigOpKind::BigCup,   Mode::Ascii)   => "Union",
-        (BigOpKind::BigCap,   Mode::Unicode) => "⋂",
-        (BigOpKind::BigCap,   Mode::Ascii)   => "Inter",
+        (BigOpKind::BigCup, Mode::Unicode) => "⋃",
+        (BigOpKind::BigCup, Mode::Ascii) => "Union",
+        (BigOpKind::BigCap, Mode::Unicode) => "⋂",
+        (BigOpKind::BigCap, Mode::Ascii) => "Inter",
         (BigOpKind::BigOplus, Mode::Unicode) => "⨁",
-        (BigOpKind::BigOplus, Mode::Ascii)   => "Oplus",
-        (BigOpKind::BigOtimes,Mode::Unicode) => "⨂",
-        (BigOpKind::BigOtimes,Mode::Ascii)   => "Otimes",
-        (BigOpKind::BigVee,   Mode::Unicode) => "⋁",
-        (BigOpKind::BigVee,   Mode::Ascii)   => "Or",
+        (BigOpKind::BigOplus, Mode::Ascii) => "Oplus",
+        (BigOpKind::BigOtimes, Mode::Unicode) => "⨂",
+        (BigOpKind::BigOtimes, Mode::Ascii) => "Otimes",
+        (BigOpKind::BigVee, Mode::Unicode) => "⋁",
+        (BigOpKind::BigVee, Mode::Ascii) => "Or",
         (BigOpKind::BigWedge, Mode::Unicode) => "⋀",
-        (BigOpKind::BigWedge, Mode::Ascii)   => "And",
+        (BigOpKind::BigWedge, Mode::Ascii) => "And",
         (BigOpKind::BigUplus, Mode::Unicode) => "⨄",
-        (BigOpKind::BigUplus, Mode::Ascii)   => "Uplus",
+        (BigOpKind::BigUplus, Mode::Ascii) => "Uplus",
         (BigOpKind::BigSqcup, Mode::Unicode) => "⨆",
-        (BigOpKind::BigSqcup, Mode::Ascii)   => "Sqcup",
+        (BigOpKind::BigSqcup, Mode::Ascii) => "Sqcup",
     };
     let bounds = format_bounds(b, mode);
     let (body_str, body_prec) = render_expr(body, mode);
-    let body_str = if body_prec < Prec::Mul { format!("({body_str})") } else { body_str };
+    let body_str = if body_prec < Prec::Mul {
+        format!("({body_str})")
+    } else {
+        body_str
+    };
 
     let mut out = if bounds.is_empty() {
         format!("{sym} {body_str}")
@@ -1095,10 +1331,13 @@ fn render_call(name: &str, arg: &Expr, mode: Mode) -> (String, Prec) {
 }
 
 fn render_juxt(items: &[Expr], mode: Mode) -> (String, Prec) {
-    let parts: Vec<String> = items.iter().map(|e| {
-        let (s, p) = render_expr(e, mode);
-        wrap(s, p, Prec::Mul)
-    }).collect();
+    let parts: Vec<String> = items
+        .iter()
+        .map(|e| {
+            let (s, p) = render_expr(e, mode);
+            wrap(s, p, Prec::Mul)
+        })
+        .collect();
     let mut out = String::new();
     for (i, part) in parts.iter().enumerate() {
         if i > 0 {
@@ -1120,7 +1359,11 @@ fn render_delim_pair(x: &Expr, open: &str, close: &str, mode: Mode) -> (String, 
 }
 
 fn render_inner(items: &[Expr], mode: Mode) -> (String, Prec) {
-    let (open, close) = if mode == Mode::Unicode { ("⟨", "⟩") } else { ("<", ">") };
+    let (open, close) = if mode == Mode::Unicode {
+        ("⟨", "⟩")
+    } else {
+        ("<", ">")
+    };
     let parts: Vec<String> = items.iter().map(|e| render_expr(e, mode).0).collect();
     (format!("{open}{}{close}", parts.join(", ")), Prec::Atom)
 }
@@ -1137,85 +1380,118 @@ fn render_matrix(kind: MatrixKind, rows: &[Vec<Expr>], mode: Mode) -> (String, P
         MatrixKind::Aligned => render_aligned(rows, mode),
         _ => {
             let (open, close) = matrix_brackets(kind, mode);
-            let row_strs: Vec<String> = rows.iter().map(|row| {
-                let cells: Vec<String> = row.iter().map(|e| render_expr(e, mode).0).collect();
-                cells.join(", ")
-            }).collect();
+            let row_strs: Vec<String> = rows
+                .iter()
+                .map(|row| {
+                    let cells: Vec<String> = row.iter().map(|e| render_expr(e, mode).0).collect();
+                    cells.join(", ")
+                })
+                .collect();
             (format!("{open}{}{close}", row_strs.join("; ")), Prec::Atom)
         }
     }
 }
 
 fn render_cases(rows: &[Vec<Expr>], mode: Mode) -> (String, Prec) {
-    let row_strs: Vec<String> = rows.iter().map(|row| match row.len() {
-        0 => String::new(),
-        1 => render_expr(&row[0], mode).0,
-        _ => {
-            let val = render_expr(&row[0], mode).0;
-            let parts: Vec<String> = row[1..].iter().map(|e| render_expr(e, mode).0).collect();
-            // Smart-join: avoid double space when adjacent pieces already pad.
-            let mut cond = String::new();
-            for (i, part) in parts.iter().enumerate() {
-                if i > 0 {
-                    let prev = &parts[i - 1];
-                    if !prev.ends_with(' ') && !part.starts_with(' ') { cond.push(' '); }
+    let row_strs: Vec<String> = rows
+        .iter()
+        .map(|row| match row.len() {
+            0 => String::new(),
+            1 => render_expr(&row[0], mode).0,
+            _ => {
+                let val = render_expr(&row[0], mode).0;
+                let parts: Vec<String> = row[1..].iter().map(|e| render_expr(e, mode).0).collect();
+                // Smart-join: avoid double space when adjacent pieces already pad.
+                let mut cond = String::new();
+                for (i, part) in parts.iter().enumerate() {
+                    if i > 0 {
+                        let prev = &parts[i - 1];
+                        if !prev.ends_with(' ') && !part.starts_with(' ') {
+                            cond.push(' ');
+                        }
+                    }
+                    cond.push_str(part);
                 }
-                cond.push_str(part);
+                let trimmed = cond.trim();
+                let lower = trimmed.to_ascii_lowercase();
+                // Skip auto-prefix when source already supplies the connector
+                // (\text{if …}, \text{otherwise}, \text{when …}).
+                let already_phrased = lower.starts_with("if ")
+                    || lower.starts_with("when ")
+                    || lower.starts_with("for ")
+                    || lower.starts_with("else")
+                    || lower == "otherwise";
+                let sep = if already_phrased { " " } else { " if " };
+                format!("{val}{sep}{trimmed}")
             }
-            let trimmed = cond.trim();
-            let lower = trimmed.to_ascii_lowercase();
-            // Skip auto-prefix when source already supplies the connector
-            // (\text{if …}, \text{otherwise}, \text{when …}).
-            let already_phrased = lower.starts_with("if ")
-                || lower.starts_with("when ")
-                || lower.starts_with("for ")
-                || lower.starts_with("else")
-                || lower == "otherwise";
-            let sep = if already_phrased { " " } else { " if " };
-            format!("{val}{sep}{trimmed}")
-        }
-    }).collect();
+        })
+        .collect();
     (format!("{{{}}}", row_strs.join("; ")), Prec::Atom)
 }
 
 fn render_aligned(rows: &[Vec<Expr>], mode: Mode) -> (String, Prec) {
     // `&` is an alignment marker only — cells in a row concatenate without separator.
     // Trim each row to avoid leading spaces when the first cell is empty (e.g. `\\ = c`).
-    let row_strs: Vec<String> = rows.iter().map(|row| {
-        let parts: Vec<String> = row.iter().map(|e| render_expr(e, mode).0).collect();
-        parts.concat().trim().to_string()
-    }).collect();
+    let row_strs: Vec<String> = rows
+        .iter()
+        .map(|row| {
+            let parts: Vec<String> = row.iter().map(|e| render_expr(e, mode).0).collect();
+            parts.concat().trim().to_string()
+        })
+        .collect();
     (row_strs.join("; "), Prec::Atom)
 }
 
 fn matrix_brackets(kind: MatrixKind, mode: Mode) -> (&'static str, &'static str) {
     use MatrixKind::*;
     match (kind, mode) {
-        (Pmatrix, _)              => ("(", ")"),
-        (Bmatrix | Matrix, _)     => ("[", "]"),
-        (Vmatrix, _)              => ("|", "|"),
-        (VMatrix, Mode::Unicode)  => ("‖", "‖"),
-        (VMatrix, Mode::Ascii)    => ("||", "||"),
-        (BMatrix, _)              => ("{", "}"),
+        (Pmatrix, _) => ("(", ")"),
+        (Bmatrix | Matrix, _) => ("[", "]"),
+        (Vmatrix, _) => ("|", "|"),
+        (VMatrix, Mode::Unicode) => ("‖", "‖"),
+        (VMatrix, Mode::Ascii) => ("||", "||"),
+        (BMatrix, _) => ("{", "}"),
         // Cases/Aligned use bespoke renderers and never hit this path.
-        (Cases | Aligned, _)      => ("", ""),
+        (Cases | Aligned, _) => ("", ""),
     }
 }
 
 fn render_bb(c: &str, mode: Mode) -> String {
     if mode == Mode::Unicode {
-        if let Some(u) = blackboard_bold(c) { return u.to_string(); }
+        if let Some(u) = blackboard_bold(c) {
+            return u.to_string();
+        }
     }
     c.to_string()
 }
 
 fn blackboard_bold(c: &str) -> Option<&'static str> {
     Some(match c {
-        "A" => "𝔸", "B" => "𝔹", "C" => "ℂ", "D" => "𝔻", "E" => "𝔼",
-        "F" => "𝔽", "G" => "𝔾", "H" => "ℍ", "I" => "𝕀", "J" => "𝕁",
-        "K" => "𝕂", "L" => "𝕃", "M" => "𝕄", "N" => "ℕ", "O" => "𝕆",
-        "P" => "ℙ", "Q" => "ℚ", "R" => "ℝ", "S" => "𝕊", "T" => "𝕋",
-        "U" => "𝕌", "V" => "𝕍", "W" => "𝕎", "X" => "𝕏", "Y" => "𝕐",
+        "A" => "𝔸",
+        "B" => "𝔹",
+        "C" => "ℂ",
+        "D" => "𝔻",
+        "E" => "𝔼",
+        "F" => "𝔽",
+        "G" => "𝔾",
+        "H" => "ℍ",
+        "I" => "𝕀",
+        "J" => "𝕁",
+        "K" => "𝕂",
+        "L" => "𝕃",
+        "M" => "𝕄",
+        "N" => "ℕ",
+        "O" => "𝕆",
+        "P" => "ℙ",
+        "Q" => "ℚ",
+        "R" => "ℝ",
+        "S" => "𝕊",
+        "T" => "𝕋",
+        "U" => "𝕌",
+        "V" => "𝕍",
+        "W" => "𝕎",
+        "X" => "𝕏",
+        "Y" => "𝕐",
         "Z" => "ℤ",
         _ => return None,
     })
@@ -1223,11 +1499,31 @@ fn blackboard_bold(c: &str) -> Option<&'static str> {
 
 fn script_char(c: char) -> Option<char> {
     Some(match c {
-        'A' => '𝒜', 'B' => 'ℬ', 'C' => '𝒞', 'D' => '𝒟', 'E' => 'ℰ',
-        'F' => 'ℱ', 'G' => '𝒢', 'H' => 'ℋ', 'I' => 'ℐ', 'J' => '𝒥',
-        'K' => '𝒦', 'L' => 'ℒ', 'M' => 'ℳ', 'N' => '𝒩', 'O' => '𝒪',
-        'P' => '𝒫', 'Q' => '𝒬', 'R' => 'ℛ', 'S' => '𝒮', 'T' => '𝒯',
-        'U' => '𝒰', 'V' => '𝒱', 'W' => '𝒲', 'X' => '𝒳', 'Y' => '𝒴',
+        'A' => '𝒜',
+        'B' => 'ℬ',
+        'C' => '𝒞',
+        'D' => '𝒟',
+        'E' => 'ℰ',
+        'F' => 'ℱ',
+        'G' => '𝒢',
+        'H' => 'ℋ',
+        'I' => 'ℐ',
+        'J' => '𝒥',
+        'K' => '𝒦',
+        'L' => 'ℒ',
+        'M' => 'ℳ',
+        'N' => '𝒩',
+        'O' => '𝒪',
+        'P' => '𝒫',
+        'Q' => '𝒬',
+        'R' => 'ℛ',
+        'S' => '𝒮',
+        'T' => '𝒯',
+        'U' => '𝒰',
+        'V' => '𝒱',
+        'W' => '𝒲',
+        'X' => '𝒳',
+        'Y' => '𝒴',
         'Z' => '𝒵',
         _ => return None,
     })
@@ -1235,17 +1531,57 @@ fn script_char(c: char) -> Option<char> {
 
 fn fraktur_char(c: char) -> Option<char> {
     Some(match c {
-        'A' => '𝔄', 'B' => '𝔅', 'C' => 'ℭ', 'D' => '𝔇', 'E' => '𝔈',
-        'F' => '𝔉', 'G' => '𝔊', 'H' => 'ℌ', 'I' => 'ℑ', 'J' => '𝔍',
-        'K' => '𝔎', 'L' => '𝔏', 'M' => '𝔐', 'N' => '𝔑', 'O' => '𝔒',
-        'P' => '𝔓', 'Q' => '𝔔', 'R' => 'ℜ', 'S' => '𝔖', 'T' => '𝔗',
-        'U' => '𝔘', 'V' => '𝔙', 'W' => '𝔚', 'X' => '𝔛', 'Y' => '𝔜',
+        'A' => '𝔄',
+        'B' => '𝔅',
+        'C' => 'ℭ',
+        'D' => '𝔇',
+        'E' => '𝔈',
+        'F' => '𝔉',
+        'G' => '𝔊',
+        'H' => 'ℌ',
+        'I' => 'ℑ',
+        'J' => '𝔍',
+        'K' => '𝔎',
+        'L' => '𝔏',
+        'M' => '𝔐',
+        'N' => '𝔑',
+        'O' => '𝔒',
+        'P' => '𝔓',
+        'Q' => '𝔔',
+        'R' => 'ℜ',
+        'S' => '𝔖',
+        'T' => '𝔗',
+        'U' => '𝔘',
+        'V' => '𝔙',
+        'W' => '𝔚',
+        'X' => '𝔛',
+        'Y' => '𝔜',
         'Z' => 'ℨ',
-        'a' => '𝔞', 'b' => '𝔟', 'c' => '𝔠', 'd' => '𝔡', 'e' => '𝔢',
-        'f' => '𝔣', 'g' => '𝔤', 'h' => '𝔥', 'i' => '𝔦', 'j' => '𝔧',
-        'k' => '𝔨', 'l' => '𝔩', 'm' => '𝔪', 'n' => '𝔫', 'o' => '𝔬',
-        'p' => '𝔭', 'q' => '𝔮', 'r' => '𝔯', 's' => '𝔰', 't' => '𝔱',
-        'u' => '𝔲', 'v' => '𝔳', 'w' => '𝔴', 'x' => '𝔵', 'y' => '𝔶',
+        'a' => '𝔞',
+        'b' => '𝔟',
+        'c' => '𝔠',
+        'd' => '𝔡',
+        'e' => '𝔢',
+        'f' => '𝔣',
+        'g' => '𝔤',
+        'h' => '𝔥',
+        'i' => '𝔦',
+        'j' => '𝔧',
+        'k' => '𝔨',
+        'l' => '𝔩',
+        'm' => '𝔪',
+        'n' => '𝔫',
+        'o' => '𝔬',
+        'p' => '𝔭',
+        'q' => '𝔮',
+        'r' => '𝔯',
+        's' => '𝔰',
+        't' => '𝔱',
+        'u' => '𝔲',
+        'v' => '𝔳',
+        'w' => '𝔴',
+        'x' => '𝔵',
+        'y' => '𝔶',
         'z' => '𝔷',
         _ => return None,
     })
@@ -1267,21 +1603,51 @@ fn render_symbol(s: &str, mode: Mode) -> String {
 
 fn unicode_symbol(name: &str) -> Option<&'static str> {
     Some(match name {
-        "alpha" => "α", "beta" => "β", "gamma" => "γ", "delta" => "δ",
-        "epsilon" => "ε", "varepsilon" => "ε",
-        "zeta" => "ζ", "eta" => "η", "theta" => "θ", "vartheta" => "ϑ",
-        "iota" => "ι", "kappa" => "κ", "lambda" => "λ", "mu" => "μ",
-        "nu" => "ν", "xi" => "ξ", "omicron" => "ο", "pi" => "π",
-        "rho" => "ρ", "sigma" => "σ", "varsigma" => "ς",
-        "tau" => "τ", "upsilon" => "υ", "phi" => "φ", "varphi" => "ϕ",
-        "chi" => "χ", "psi" => "ψ", "omega" => "ω",
-        "Gamma" => "Γ", "Delta" => "Δ", "Theta" => "Θ", "Lambda" => "Λ",
-        "Xi" => "Ξ", "Pi" => "Π", "Sigma" => "Σ", "Upsilon" => "Υ",
-        "Phi" => "Φ", "Psi" => "Ψ", "Omega" => "Ω",
+        "alpha" => "α",
+        "beta" => "β",
+        "gamma" => "γ",
+        "delta" => "δ",
+        "epsilon" => "ε",
+        "varepsilon" => "ε",
+        "zeta" => "ζ",
+        "eta" => "η",
+        "theta" => "θ",
+        "vartheta" => "ϑ",
+        "iota" => "ι",
+        "kappa" => "κ",
+        "lambda" => "λ",
+        "mu" => "μ",
+        "nu" => "ν",
+        "xi" => "ξ",
+        "omicron" => "ο",
+        "pi" => "π",
+        "rho" => "ρ",
+        "sigma" => "σ",
+        "varsigma" => "ς",
+        "tau" => "τ",
+        "upsilon" => "υ",
+        "phi" => "φ",
+        "varphi" => "ϕ",
+        "chi" => "χ",
+        "psi" => "ψ",
+        "omega" => "ω",
+        "Gamma" => "Γ",
+        "Delta" => "Δ",
+        "Theta" => "Θ",
+        "Lambda" => "Λ",
+        "Xi" => "Ξ",
+        "Pi" => "Π",
+        "Sigma" => "Σ",
+        "Upsilon" => "Υ",
+        "Phi" => "Φ",
+        "Psi" => "Ψ",
+        "Omega" => "Ω",
         "infty" | "infinity" => "∞",
-        "partial" => "∂", "nabla" => "∇",
+        "partial" => "∂",
+        "nabla" => "∇",
         "cdots" | "ldots" | "dots" | "vdots" | "ddots" => "…",
-        "forall" => "∀", "exists" => "∃",
+        "forall" => "∀",
+        "exists" => "∃",
         "emptyset" | "varnothing" => "∅",
         "Rightarrow" | "implies" => "⇒",
         "Leftarrow" => "⇐",
@@ -1363,7 +1729,7 @@ fn ascii_symbol(name: &str) -> &str {
         "downarrow" | "Downarrow" => "v",
         "updownarrow" => "^v",
         "longrightarrow" | "hookrightarrow" | "rightharpoonup" | "nearrow" | "searrow" => "->",
-        "longleftarrow"  | "hookleftarrow"  | "leftharpoonup"  | "nwarrow" | "swarrow" => "<-",
+        "longleftarrow" | "hookleftarrow" | "leftharpoonup" | "nwarrow" | "swarrow" => "<-",
         "longleftrightarrow" | "rightleftharpoons" => "<->",
         "longmapsto" => "|->",
         "Longrightarrow" => "=>",
@@ -1461,34 +1827,34 @@ fn bin_symbol(op: BinOp, mode: Mode) -> &'static str {
         (Notin, Mode::Ascii) => "not in",
         (Bullet, Mode::Unicode) => "•",
         (Bullet, Mode::Ascii) => ".",
-        (Precedes,   Mode::Unicode) => "≺",
-        (Precedes,   Mode::Ascii)   => "prec",
-        (Succeeds,   Mode::Unicode) => "≻",
-        (Succeeds,   Mode::Ascii)   => "succ",
-        (Preceq,     Mode::Unicode) => "⪯",
-        (Preceq,     Mode::Ascii)   => "preceq",
-        (Succeq,     Mode::Unicode) => "⪰",
-        (Succeq,     Mode::Ascii)   => "succeq",
+        (Precedes, Mode::Unicode) => "≺",
+        (Precedes, Mode::Ascii) => "prec",
+        (Succeeds, Mode::Unicode) => "≻",
+        (Succeeds, Mode::Ascii) => "succ",
+        (Preceq, Mode::Unicode) => "⪯",
+        (Preceq, Mode::Ascii) => "preceq",
+        (Succeq, Mode::Unicode) => "⪰",
+        (Succeq, Mode::Ascii) => "succeq",
         (Sqsubseteq, Mode::Unicode) => "⊑",
-        (Sqsubseteq, Mode::Ascii)   => "sqsubseteq",
+        (Sqsubseteq, Mode::Ascii) => "sqsubseteq",
         (Sqsupseteq, Mode::Unicode) => "⊒",
-        (Sqsupseteq, Mode::Ascii)   => "sqsupseteq",
-        (Cong,       Mode::Unicode) => "≅",
-        (Cong,       Mode::Ascii)   => "cong",
-        (Simeq,      Mode::Unicode) => "≃",
-        (Simeq,      Mode::Ascii)   => "simeq",
-        (Asymp,      Mode::Unicode) => "≍",
-        (Asymp,      Mode::Ascii)   => "asymp",
-        (Sqcup,      Mode::Unicode) => "⊔",
-        (Sqcup,      Mode::Ascii)   => "sqcup",
-        (Sqcap,      Mode::Unicode) => "⊓",
-        (Sqcap,      Mode::Ascii)   => "sqcap",
-        (Uplus,      Mode::Unicode) => "⊎",
-        (Uplus,      Mode::Ascii)   => "uplus",
-        (Amalg,      Mode::Unicode) => "⨿",
-        (Amalg,      Mode::Ascii)   => "amalg",
-        (Wr,         Mode::Unicode) => "≀",
-        (Wr,         Mode::Ascii)   => "wr",
+        (Sqsupseteq, Mode::Ascii) => "sqsupseteq",
+        (Cong, Mode::Unicode) => "≅",
+        (Cong, Mode::Ascii) => "cong",
+        (Simeq, Mode::Unicode) => "≃",
+        (Simeq, Mode::Ascii) => "simeq",
+        (Asymp, Mode::Unicode) => "≍",
+        (Asymp, Mode::Ascii) => "asymp",
+        (Sqcup, Mode::Unicode) => "⊔",
+        (Sqcup, Mode::Ascii) => "sqcup",
+        (Sqcap, Mode::Unicode) => "⊓",
+        (Sqcap, Mode::Ascii) => "sqcap",
+        (Uplus, Mode::Unicode) => "⊎",
+        (Uplus, Mode::Ascii) => "uplus",
+        (Amalg, Mode::Unicode) => "⨿",
+        (Amalg, Mode::Ascii) => "amalg",
+        (Wr, Mode::Unicode) => "≀",
+        (Wr, Mode::Ascii) => "wr",
     }
 }
 
@@ -1510,39 +1876,100 @@ pub fn to_subscript(s: &str) -> Option<String> {
 
 fn sup_char(c: char) -> Option<char> {
     Some(match c {
-        '0' => '⁰', '1' => '¹', '2' => '²', '3' => '³', '4' => '⁴',
-        '5' => '⁵', '6' => '⁶', '7' => '⁷', '8' => '⁸', '9' => '⁹',
-        '+' => '⁺', '-' => '⁻', '=' => '⁼', '(' => '⁽', ')' => '⁾',
-        'a' => 'ᵃ', 'b' => 'ᵇ', 'c' => 'ᶜ', 'd' => 'ᵈ', 'e' => 'ᵉ',
-        'f' => 'ᶠ', 'g' => 'ᵍ', 'h' => 'ʰ', 'i' => 'ⁱ', 'j' => 'ʲ',
-        'k' => 'ᵏ', 'l' => 'ˡ', 'm' => 'ᵐ', 'n' => 'ⁿ', 'o' => 'ᵒ',
-        'p' => 'ᵖ', 'r' => 'ʳ', 's' => 'ˢ', 't' => 'ᵗ', 'u' => 'ᵘ',
-        'v' => 'ᵛ', 'w' => 'ʷ', 'x' => 'ˣ', 'y' => 'ʸ', 'z' => 'ᶻ',
+        '0' => '⁰',
+        '1' => '¹',
+        '2' => '²',
+        '3' => '³',
+        '4' => '⁴',
+        '5' => '⁵',
+        '6' => '⁶',
+        '7' => '⁷',
+        '8' => '⁸',
+        '9' => '⁹',
+        '+' => '⁺',
+        '-' => '⁻',
+        '=' => '⁼',
+        '(' => '⁽',
+        ')' => '⁾',
+        'a' => 'ᵃ',
+        'b' => 'ᵇ',
+        'c' => 'ᶜ',
+        'd' => 'ᵈ',
+        'e' => 'ᵉ',
+        'f' => 'ᶠ',
+        'g' => 'ᵍ',
+        'h' => 'ʰ',
+        'i' => 'ⁱ',
+        'j' => 'ʲ',
+        'k' => 'ᵏ',
+        'l' => 'ˡ',
+        'm' => 'ᵐ',
+        'n' => 'ⁿ',
+        'o' => 'ᵒ',
+        'p' => 'ᵖ',
+        'r' => 'ʳ',
+        's' => 'ˢ',
+        't' => 'ᵗ',
+        'u' => 'ᵘ',
+        'v' => 'ᵛ',
+        'w' => 'ʷ',
+        'x' => 'ˣ',
+        'y' => 'ʸ',
+        'z' => 'ᶻ',
         _ => return None,
     })
 }
 
 fn sub_char(c: char) -> Option<char> {
     Some(match c {
-        '0' => '₀', '1' => '₁', '2' => '₂', '3' => '₃', '4' => '₄',
-        '5' => '₅', '6' => '₆', '7' => '₇', '8' => '₈', '9' => '₉',
-        '+' => '₊', '-' => '₋', '=' => '₌', '(' => '₍', ')' => '₎',
-        'a' => 'ₐ', 'e' => 'ₑ', 'h' => 'ₕ', 'i' => 'ᵢ', 'j' => 'ⱼ',
-        'k' => 'ₖ', 'l' => 'ₗ', 'm' => 'ₘ', 'n' => 'ₙ', 'o' => 'ₒ',
-        'p' => 'ₚ', 'r' => 'ᵣ', 's' => 'ₛ', 't' => 'ₜ', 'u' => 'ᵤ',
-        'v' => 'ᵥ', 'x' => 'ₓ',
+        '0' => '₀',
+        '1' => '₁',
+        '2' => '₂',
+        '3' => '₃',
+        '4' => '₄',
+        '5' => '₅',
+        '6' => '₆',
+        '7' => '₇',
+        '8' => '₈',
+        '9' => '₉',
+        '+' => '₊',
+        '-' => '₋',
+        '=' => '₌',
+        '(' => '₍',
+        ')' => '₎',
+        'a' => 'ₐ',
+        'e' => 'ₑ',
+        'h' => 'ₕ',
+        'i' => 'ᵢ',
+        'j' => 'ⱼ',
+        'k' => 'ₖ',
+        'l' => 'ₗ',
+        'm' => 'ₘ',
+        'n' => 'ₙ',
+        'o' => 'ₒ',
+        'p' => 'ₚ',
+        'r' => 'ᵣ',
+        's' => 'ₛ',
+        't' => 'ₜ',
+        'u' => 'ᵤ',
+        'v' => 'ᵥ',
+        'x' => 'ₓ',
         _ => return None,
     })
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
-#[cfg(test)]
+#[cfg(all(test, not(feature = "libtexprintf")))]
 mod tests {
     use super::*;
 
-    fn r(s: &str) -> String { render_math_block_with(&format!("${s}$"), Mode::Unicode) }
-    fn a(s: &str) -> String { render_math_block_with(&format!("${s}$"), Mode::Ascii) }
+    fn r(s: &str) -> String {
+        render_math_block_with(&format!("${s}$"), Mode::Unicode)
+    }
+    fn a(s: &str) -> String {
+        render_math_block_with(&format!("${s}$"), Mode::Ascii)
+    }
 
     // ── Headline examples ────────────────────────────────────────────────────
 
@@ -1704,7 +2131,10 @@ mod tests {
 
     #[test]
     fn prose_passthrough() {
-        assert_eq!(render_math_lines("plain text, no math"), "plain text, no math");
+        assert_eq!(
+            render_math_lines("plain text, no math"),
+            "plain text, no math"
+        );
     }
 
     #[test]
@@ -1854,10 +2284,7 @@ mod tests {
 
     #[test]
     fn matrix_double_vmatrix() {
-        assert_eq!(
-            r(r"\begin{Vmatrix} v_1 & v_2 \end{Vmatrix}"),
-            "‖v₁, v₂‖"
-        );
+        assert_eq!(r(r"\begin{Vmatrix} v_1 & v_2 \end{Vmatrix}"), "‖v₁, v₂‖");
         assert_eq!(
             a(r"\begin{Vmatrix} v_1 & v_2 \end{Vmatrix}"),
             "||v_1, v_2||"
@@ -1866,18 +2293,12 @@ mod tests {
 
     #[test]
     fn matrix_column_vector() {
-        assert_eq!(
-            r(r"\begin{pmatrix} x \\ y \\ z \end{pmatrix}"),
-            "(x; y; z)"
-        );
+        assert_eq!(r(r"\begin{pmatrix} x \\ y \\ z \end{pmatrix}"), "(x; y; z)");
     }
 
     #[test]
     fn matrix_row_vector() {
-        assert_eq!(
-            r(r"\begin{pmatrix} 1 & 2 & 3 \end{pmatrix}"),
-            "(1, 2, 3)"
-        );
+        assert_eq!(r(r"\begin{pmatrix} 1 & 2 & 3 \end{pmatrix}"), "(1, 2, 3)");
     }
 
     #[test]

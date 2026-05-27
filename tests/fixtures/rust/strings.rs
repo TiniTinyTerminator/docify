@@ -75,3 +75,44 @@ impl ListBuilder {
         todo!()
     }
 }
+
+/// Error returned when a template references a missing variable.
+pub struct TemplateError {
+    /// Name of the missing variable.
+    pub variable: String,
+}
+
+/// Render a tiny `{name}` template using a lookup callback.
+///
+/// Placeholders are replaced left-to-right. Unknown variables return a
+/// [`TemplateError`] so callers can decide whether to retry with more data.
+///
+/// # Arguments
+/// - `template`: Source string containing `{name}` placeholders.
+/// - `lookup`: Callback that returns a replacement for a placeholder name.
+///
+/// # Returns
+/// The rendered template.
+///
+/// # Errors
+/// Returns [`TemplateError`] when `lookup` does not provide a value.
+pub fn render_template<F>(template: &str, lookup: F) -> Result<String, TemplateError>
+where
+    F: Fn(&str) -> Option<String>,
+{
+    todo!()
+}
+
+/// Parse a comma-separated string into trimmed non-empty fields.
+///
+/// Empty fields are skipped so callers can accept user-facing input such as
+/// `"alpha, beta,, gamma"` without post-processing.
+///
+/// # Arguments
+/// - `input`: Comma-separated input text.
+///
+/// # Returns
+/// A vector of borrowed field slices in source order.
+pub fn parse_csv_fields(input: &str) -> Vec<&str> {
+    todo!()
+}

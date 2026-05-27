@@ -105,13 +105,21 @@ fn main() {
         out: PathBuf::from("target/doc"),
         dry_run: false,
     }) {
-        Cmd::Gen { dirs, out, dry_run }          => cmd_gen(dirs, out, dry_run),
-        Cmd::Get { name, dirs }                  => cmd_get(&name, dirs),
-        Cmd::Source { name, dirs, max_lines }    => cmd_source(&name, dirs, max_lines),
-        Cmd::Context { name, dirs, max_lines }   => cmd_context(&name, dirs, max_lines),
-        Cmd::Search { query, dirs }              => cmd_search(&query, dirs),
-        Cmd::Outline { dirs }                    => cmd_outline(dirs),
-        Cmd::Browse { dirs }                     => cmd_browse(dirs),
+        Cmd::Gen { dirs, out, dry_run } => cmd_gen(dirs, out, dry_run),
+        Cmd::Get { name, dirs } => cmd_get(&name, dirs),
+        Cmd::Source {
+            name,
+            dirs,
+            max_lines,
+        } => cmd_source(&name, dirs, max_lines),
+        Cmd::Context {
+            name,
+            dirs,
+            max_lines,
+        } => cmd_context(&name, dirs, max_lines),
+        Cmd::Search { query, dirs } => cmd_search(&query, dirs),
+        Cmd::Outline { dirs } => cmd_outline(dirs),
+        Cmd::Browse { dirs } => cmd_browse(dirs),
     }
 }
 
@@ -142,7 +150,8 @@ fn cmd_gen(raw_dirs: Vec<PathBuf>, out: PathBuf, dry_run: bool) {
     if dry_run {
         println!("{total} documented items found:");
         for item in &all_items {
-            let rel = item.file
+            let rel = item
+                .file
                 .strip_prefix(&source_root)
                 .unwrap_or(&item.file)
                 .display()
@@ -151,14 +160,21 @@ fn cmd_gen(raw_dirs: Vec<PathBuf>, out: PathBuf, dry_run: bool) {
                 "  [{lang}] {kind} {name} ({rel}:{line})",
                 lang = item.lang.label(),
                 kind = item.kind.label(),
-                name = if item.name.is_empty() { "(anonymous)" } else { &item.name },
+                name = if item.name.is_empty() {
+                    "(anonymous)"
+                } else {
+                    &item.name
+                },
                 line = item.line,
             );
         }
         return;
     }
 
-    let set = DocSet { items: all_items, source_root };
+    let set = DocSet {
+        items: all_items,
+        source_root,
+    };
 
     if let Err(e) = render(&set, &out) {
         eprintln!("error: {e}");
@@ -291,5 +307,8 @@ fn common_ancestor(dirs: &[PathBuf]) -> PathBuf {
     for dir in &dirs[1..] {
         components.retain(|&ancestor| dir.starts_with(ancestor));
     }
-    components.first().map(|p| p.to_path_buf()).unwrap_or_else(|| dirs[0].clone())
+    components
+        .first()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| dirs[0].clone())
 }

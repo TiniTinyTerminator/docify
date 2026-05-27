@@ -1,11 +1,13 @@
-use std::path::Path;
+use super::common::{build_item, ci_ident_after, item_has_content, next_non_blank};
 use super::{DocExtractor, DocItem, DocKind, DocLanguage};
-use super::common::{build_item, item_has_content, next_non_blank, ci_ident_after};
+use std::path::Path;
 
 pub struct AdaExtractor;
 
 impl DocExtractor for AdaExtractor {
-    fn extensions(&self) -> &[&str] { &["ads", "adb"] }
+    fn extensions(&self) -> &[&str] {
+        &["ads", "adb"]
+    }
     fn extract(&self, path: &Path, src: &str) -> Vec<DocItem> {
         extract_ada(src, path)
     }
@@ -17,13 +19,16 @@ pub(super) fn extract_ada(src: &str, file: &Path) -> Vec<DocItem> {
     let mut i = 0;
 
     // Pre-scan for the outermost package name so we can qualify all names.
-    let pkg_name: String = lines.iter()
+    let pkg_name: String = lines
+        .iter()
         .find_map(|l| {
             let t = l.trim();
             let up = t.to_ascii_uppercase();
             if up.starts_with("PACKAGE ") && !up.starts_with("PACKAGE BODY") {
                 let name = ci_ident_after(t, "package ");
-                if !name.is_empty() { return Some(name); }
+                if !name.is_empty() {
+                    return Some(name);
+                }
             }
             None
         })
@@ -41,8 +46,18 @@ pub(super) fn extract_ada(src: &str, file: &Path) -> Vec<DocItem> {
             } else {
                 name
             };
-            let item = build_item(block, qualified, kind, file, i + 1, DocLanguage::Ada, sym.to_string());
-            if item_has_content(&item) { items.push(item); }
+            let item = build_item(
+                block,
+                qualified,
+                kind,
+                file,
+                i + 1,
+                DocLanguage::Ada,
+                sym.to_string(),
+            );
+            if item_has_content(&item) {
+                items.push(item);
+            }
             i = end + 1;
             continue;
         }
@@ -69,9 +84,17 @@ fn collect_ada_block(lines: &[&str], start: usize) -> (Vec<String>, usize) {
 fn detect_ada_symbol(line: &str) -> (String, DocKind) {
     let t = line.trim();
     let up = t.to_ascii_uppercase();
-    if up.starts_with("PROCEDURE ") { return (ci_ident_after(t, "procedure "), DocKind::Subroutine); }
-    if up.starts_with("FUNCTION ")  { return (ci_ident_after(t, "function "),  DocKind::Function); }
-    if up.starts_with("PACKAGE ")   { return (ci_ident_after(t, "package "),   DocKind::Module); }
-    if up.starts_with("TYPE ")      { return (ci_ident_after(t, "type "),       DocKind::Typedef); }
+    if up.starts_with("PROCEDURE ") {
+        return (ci_ident_after(t, "procedure "), DocKind::Subroutine);
+    }
+    if up.starts_with("FUNCTION ") {
+        return (ci_ident_after(t, "function "), DocKind::Function);
+    }
+    if up.starts_with("PACKAGE ") {
+        return (ci_ident_after(t, "package "), DocKind::Module);
+    }
+    if up.starts_with("TYPE ") {
+        return (ci_ident_after(t, "type "), DocKind::Typedef);
+    }
     (String::new(), DocKind::Unknown)
 }

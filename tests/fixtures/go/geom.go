@@ -66,3 +66,27 @@ func (r Rect) Area() float64 { return r.W * r.H }
 
 // Perimeter returns the perimeter of r.
 func (r Rect) Perimeter() float64 { return 2 * (r.W + r.H) }
+
+// PolygonArea returns the signed area of a simple polygon.
+//
+// The input points are interpreted as a closed ring; the first point is not
+// repeated automatically in the returned documentation, but the implementation
+// wraps from the last point back to the first.
+func PolygonArea(points []Vec2) float64 {
+	if len(points) < 3 {
+		return 0
+	}
+	sum := 0.0
+	for i, p := range points {
+		q := points[(i+1)%len(points)]
+		sum += p.X*q.Y - q.X*p.Y
+	}
+	return sum / 2
+}
+
+// Bounds returns the smallest rectangle that contains all points.
+//
+// Returns the zero rectangle when points is empty.
+func Bounds(points []Vec2) Rect {
+	return Rect{}
+}

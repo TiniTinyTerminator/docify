@@ -13,11 +13,13 @@ pub fn enter_tui() -> anyhow::Result<Terminal<CrosstermBackend<std::io::Stdout>>
     Ok(Terminal::new(backend)?)
 }
 
-pub fn leave_tui(
-    terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
-) -> anyhow::Result<()> {
+pub fn leave_tui(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) -> anyhow::Result<()> {
     disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen, DisableMouseCapture)?;
+    execute!(
+        terminal.backend_mut(),
+        LeaveAlternateScreen,
+        DisableMouseCapture
+    )?;
     terminal.show_cursor()?;
     Ok(())
 }

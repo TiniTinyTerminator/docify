@@ -12,9 +12,7 @@
 /// error and the extractor falls back to the heuristic scanner automatically.
 use std::path::Path;
 
-use crate::extract::{
-    Access, DocItem, DocKind, DocLanguage, DocMeta,
-};
+use crate::extract::{Access, DocItem, DocKind, DocLanguage, DocMeta};
 
 /// Parse `path` via libclang and return documented items.
 ///
@@ -24,7 +22,7 @@ pub fn extract_file_clang(path: &Path) -> Vec<DocItem> {
     use clang::{Clang, Index};
 
     let clang = match Clang::new() {
-        Ok(c)  => c,
+        Ok(c) => c,
         Err(e) => {
             eprintln!("docify: libclang unavailable ({e}); falling back to heuristic extractor");
             return crate::extract::extract_file_heuristic(path);
@@ -33,8 +31,13 @@ pub fn extract_file_clang(path: &Path) -> Vec<DocItem> {
 
     let index = Index::new(&clang, false, false);
 
-    let ext  = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-    let lang = crate::extract::lang_from_ext(ext);
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+    let source = std::fs::read_to_string(path).unwrap_or_default();
+    let lang = if ext == "h" && crate::extract::looks_like_cpp_header(&source) {
+        DocLanguage::Cpp
+    } else {
+        crate::extract::lang_from_ext(ext)
+    };
 
     // `.h` is ambiguous — many C++ projects use it for C++ headers.  Parse
     // everything as C++ unless the extension is unambiguously C (`.c`).
@@ -80,15 +83,17 @@ pub fn extract_file_clang(path: &Path) -> Vec<DocItem> {
 
 fn visit_entity(
     entity: clang::Entity<'_>,
-    out:    &mut Vec<DocItem>,
-    seen:   &mut std::collections::HashSet<String>,
-    file:   &Path,
-    lang:   &DocLanguage,
+    out: &mut Vec<DocItem>,
+    seen: &mut std::collections::HashSet<String>,
+    file: &Path,
+    lang: &DocLanguage,
 ) {
     use clang::EntityKind;
 
     // Skip system headers.
-    if entity.is_in_system_header() { return; }
+    if entity.is_in_system_header() {
+        return;
+    }
 
     let kind = entity.get_kind();
 
@@ -96,24 +101,24 @@ fn visit_entity(
     let is_container = matches!(
         kind,
         EntityKind::Namespace
-        | EntityKind::ClassDecl
-        | EntityKind::ClassTemplate
-        | EntityKind::StructDecl
+            | EntityKind::ClassDecl
+            | EntityKind::ClassTemplate
+            | EntityKind::StructDecl
     );
 
     // Map to our DocKind.
     let doc_kind: Option<DocKind> = match kind {
         EntityKind::FunctionDecl | EntityKind::FunctionTemplate => Some(DocKind::Function),
-        EntityKind::Constructor                                  => Some(DocKind::Function),
-        EntityKind::Destructor                                   => Some(DocKind::Function),
-        EntityKind::Method                                       => Some(DocKind::Function),
-        EntityKind::ConversionFunction                           => Some(DocKind::Function),
-        EntityKind::ClassDecl | EntityKind::ClassTemplate        => Some(DocKind::Class),
-        EntityKind::StructDecl                                   => Some(DocKind::Struct),
-        EntityKind::EnumDecl                                     => Some(DocKind::Enum),
-        EntityKind::TypedefDecl | EntityKind::TypeAliasDecl      => Some(DocKind::Typedef),
-        EntityKind::VarDecl | EntityKind::FieldDecl              => Some(DocKind::Variable),
-        _                                                        => None,
+        EntityKind::Constructor => Some(DocKind::Function),
+        EntityKind::Destructor => Some(DocKind::Function),
+        EntityKind::Method => Some(DocKind::Function),
+        EntityKind::ConversionFunction => Some(DocKind::Function),
+        EntityKind::ClassDecl | EntityKind::ClassTemplate => Some(DocKind::Class),
+        EntityKind::StructDecl => Some(DocKind::Struct),
+        EntityKind::EnumDecl => Some(DocKind::Enum),
+        EntityKind::TypedefDecl | EntityKind::TypeAliasDecl => Some(DocKind::Typedef),
+        EntityKind::VarDecl | EntityKind::FieldDecl => Some(DocKind::Variable),
+        _ => None,
     };
 
     if let Some(dk) = doc_kind {
@@ -126,11 +131,13 @@ fn visit_entity(
                     seen.insert(qname.clone());
 
                     let meta = build_meta(&entity, kind);
-                    let sig  = entity.get_display_name().unwrap_or_default();
-                    let line = entity.get_location()
+                    let sig = entity.get_display_name().unwrap_or_default();
+                    let line = entity
+                        .get_location()
                         .and_then(|l| l.get_file_location().line.try_into().ok())
                         .unwrap_or(0);
-                    let item = build_doc_item(raw_comment, qname, dk, file, line, lang.clone(), sig, meta);
+                    let item =
+                        build_doc_item(raw_comment, qname, dk, file, line, lang.clone(), sig, meta);
                     if crate::extract::item_has_content(&item) {
                         out.push(item);
                     }
@@ -160,11 +167,15 @@ fn qualified_name(entity: &clang::Entity<'_>) -> String {
             None => break,
             Some(parent) => {
                 if let Some(n) = cur.get_name() {
-                    if !n.is_empty() { parts.push(n); }
+                    if !n.is_empty() {
+                        parts.push(n);
+                    }
                 }
                 // If the parent itself has no parent it's the TU — stop after
                 // adding cur's name (already done above).
-                if parent.get_semantic_parent().is_none() { break; }
+                if parent.get_semantic_parent().is_none() {
+                    break;
+                }
                 cur = parent;
             }
         }
@@ -178,56 +189,84 @@ fn build_meta(entity: &clang::Entity<'_>, kind: clang::EntityKind) -> DocMeta {
     use clang::{Accessibility, EntityKind};
 
     let access = entity.get_accessibility().map(|a| match a {
-        Accessibility::Public    => Access::Public,
+        Accessibility::Public => Access::Public,
         Accessibility::Protected => Access::Protected,
-        Accessibility::Private   => Access::Private,
+        Accessibility::Private => Access::Private,
     });
 
     let parent = entity.get_semantic_parent().and_then(|p| {
-        matches!(p.get_kind(), EntityKind::ClassDecl | EntityKind::StructDecl | EntityKind::ClassTemplate)
-            .then(|| p.get_name().unwrap_or_default())
-            .filter(|n| !n.is_empty())
+        matches!(
+            p.get_kind(),
+            EntityKind::ClassDecl | EntityKind::StructDecl | EntityKind::ClassTemplate
+        )
+        .then(|| p.get_name().unwrap_or_default())
+        .filter(|n| !n.is_empty())
     });
 
-    let template_params = entity.get_template()
+    let template_params = entity
+        .get_template()
         .map(|t| t.get_children())
         .unwrap_or_default()
         .iter()
         .filter_map(|c| {
             use clang::EntityKind as EK;
-            matches!(c.get_kind(), EK::TemplateTypeParameter | EK::NonTypeTemplateParameter | EK::TemplateTemplateParameter)
-                .then(|| c.get_display_name().unwrap_or_default())
-                .filter(|s| !s.is_empty())
+            matches!(
+                c.get_kind(),
+                EK::TemplateTypeParameter
+                    | EK::NonTypeTemplateParameter
+                    | EK::TemplateTemplateParameter
+            )
+            .then(|| c.get_display_name().unwrap_or_default())
+            .filter(|s| !s.is_empty())
         })
         .collect();
 
     let mut attrs = Vec::new();
     match kind {
-        EntityKind::Constructor        => attrs.push("constructor".into()),
-        EntityKind::Destructor         => attrs.push("destructor".into()),
+        EntityKind::Constructor => attrs.push("constructor".into()),
+        EntityKind::Destructor => attrs.push("destructor".into()),
         EntityKind::ConversionFunction => attrs.push("operator".into()),
         _ => {}
     }
-    if entity.get_name().map_or(false, |n| n.starts_with("operator")) {
-        if !attrs.contains(&"operator".to_string()) { attrs.push("operator".into()); }
+    if entity
+        .get_name()
+        .map_or(false, |n| n.starts_with("operator"))
+    {
+        if !attrs.contains(&"operator".to_string()) {
+            attrs.push("operator".into());
+        }
     }
-    if entity.is_pure_virtual_method() { attrs.push("pure".into()); attrs.push("virtual".into()); }
-    else if entity.is_virtual_method() { attrs.push("virtual".into()); }
-    if entity.is_const_method()        { attrs.push("const".into()); }
+    if entity.is_pure_virtual_method() {
+        attrs.push("pure".into());
+        attrs.push("virtual".into());
+    } else if entity.is_virtual_method() {
+        attrs.push("virtual".into());
+    }
+    if entity.is_const_method() {
+        attrs.push("const".into());
+    }
 
-    DocMeta { template_params, access, parent, attrs }
+    DocMeta {
+        template_params,
+        access,
+        parent,
+        attrs,
+    }
 }
 
 fn build_doc_item(
-    raw:    String,
-    name:   String,
-    kind:   DocKind,
-    file:   &Path,
-    line:   usize,
-    lang:   DocLanguage,
-    sig:    String,
-    meta:   DocMeta,
+    raw: String,
+    name: String,
+    kind: DocKind,
+    file: &Path,
+    line: usize,
+    lang: DocLanguage,
+    sig: String,
+    meta: DocMeta,
 ) -> DocItem {
+    // Keep clang in the same pipeline as the heuristic extractors:
+    // raw attached comment -> docify tag/prose parser -> Markdown/TUI renderers.
+    // Do not use libclang's formatted HTML/XML comment renderers here.
     let lines: Vec<String> = strip_comment_markers(&raw);
     let mut item = crate::extract::build_item(lines, name, kind, file, line, lang, sig);
     item.meta = meta;
@@ -240,15 +279,34 @@ fn strip_comment_markers(raw: &str) -> Vec<String> {
         let t = line.trim();
         if t.starts_with("/**") || t.starts_with("/*!") {
             let inner = t[3..].trim_start_matches('*').trim();
-            if !inner.is_empty() && inner != "/" { out.push(inner.to_string()); }
+            if !inner.is_empty() && inner != "/" {
+                out.push(inner.to_string());
+            }
             continue;
         }
-        if t == "*/" || t == "/*" { continue; }
-        if let Some(r) = t.strip_prefix("* ") { out.push(r.to_string()); continue; }
-        if t == "*" { out.push(String::new()); continue; }
-        if let Some(r) = t.strip_prefix('*') { out.push(r.to_string()); continue; }
-        if let Some(r) = t.strip_prefix("/// ") { out.push(r.to_string()); continue; }
-        if t == "///" { out.push(String::new()); continue; }
+        if t == "*/" || t == "/*" {
+            continue;
+        }
+        if let Some(r) = t.strip_prefix("* ") {
+            out.push(r.to_string());
+            continue;
+        }
+        if t == "*" {
+            out.push(String::new());
+            continue;
+        }
+        if let Some(r) = t.strip_prefix('*') {
+            out.push(r.to_string());
+            continue;
+        }
+        if let Some(r) = t.strip_prefix("/// ") {
+            out.push(r.to_string());
+            continue;
+        }
+        if t == "///" {
+            out.push(String::new());
+            continue;
+        }
         out.push(t.to_string());
     }
     out

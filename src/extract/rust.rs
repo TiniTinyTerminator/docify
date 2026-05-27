@@ -1,11 +1,15 @@
-use std::path::Path;
+use super::common::{
+    build_item, collect_c_block, collect_line_block, first_ident, item_has_content, next_non_blank,
+};
 use super::{DocExtractor, DocItem, DocKind, DocLanguage};
-use super::common::{build_item, item_has_content, collect_c_block, collect_line_block, next_non_blank, first_ident};
+use std::path::Path;
 
 pub struct RustExtractor;
 
 impl DocExtractor for RustExtractor {
-    fn extensions(&self) -> &[&str] { &["rs"] }
+    fn extensions(&self) -> &[&str] {
+        &["rs"]
+    }
     fn extract(&self, path: &Path, src: &str) -> Vec<DocItem> {
         extract_rust(src, path)
     }
@@ -29,8 +33,18 @@ pub(super) fn extract_rust(src: &str, file: &Path) -> Vec<DocItem> {
             let sym = next_non_blank(&lines, end + 1);
             let (name, kind) = detect_rust_symbol(sym);
             let ns = mod_stack.last().map(|(_, p)| p.as_str()).unwrap_or("");
-            let item = build_item(normalize_sections(block), qualify_name(&name, ns), kind, file, i + 1, DocLanguage::Rust, sym.to_string());
-            if item_has_content(&item) { items.push(item); }
+            let item = build_item(
+                normalize_sections(block),
+                qualify_name(&name, ns),
+                kind,
+                file,
+                i + 1,
+                DocLanguage::Rust,
+                sym.to_string(),
+            );
+            if item_has_content(&item) {
+                items.push(item);
+            }
             i = end + 1;
             continue;
         }
@@ -40,8 +54,18 @@ pub(super) fn extract_rust(src: &str, file: &Path) -> Vec<DocItem> {
             let sym = next_non_blank(&lines, end + 1);
             let (name, kind) = detect_rust_symbol(sym);
             let ns = mod_stack.last().map(|(_, p)| p.as_str()).unwrap_or("");
-            let item = build_item(normalize_sections(block), qualify_name(&name, ns), kind, file, i + 1, DocLanguage::Rust, sym.to_string());
-            if item_has_content(&item) { items.push(item); }
+            let item = build_item(
+                normalize_sections(block),
+                qualify_name(&name, ns),
+                kind,
+                file,
+                i + 1,
+                DocLanguage::Rust,
+                sym.to_string(),
+            );
+            if item_has_content(&item) {
+                items.push(item);
+            }
             i = end + 1;
             continue;
         }
@@ -54,10 +78,10 @@ pub(super) fn extract_rust(src: &str, file: &Path) -> Vec<DocItem> {
                 if !name.is_empty() && !t.trim_end().ends_with(';') {
                     let path = match mod_stack.last() {
                         Some((_, p)) => format!("{p}::{name}"),
-                        None         => name,
+                        None => name,
                     };
                     if t.contains('{') {
-                        let opens  = t.chars().filter(|&c| c == '{').count();
+                        let opens = t.chars().filter(|&c| c == '{').count();
                         let closes = t.chars().filter(|&c| c == '}').count();
                         brace_depth = brace_depth.saturating_add(opens).saturating_sub(closes);
                         mod_stack.push((brace_depth, path));
@@ -70,8 +94,8 @@ pub(super) fn extract_rust(src: &str, file: &Path) -> Vec<DocItem> {
             }
 
             if pending_mod.is_some() && t.contains('{') {
-                let path   = pending_mod.take().unwrap();
-                let opens  = t.chars().filter(|&c| c == '{').count();
+                let path = pending_mod.take().unwrap();
+                let opens = t.chars().filter(|&c| c == '{').count();
                 let closes = t.chars().filter(|&c| c == '}').count();
                 brace_depth = brace_depth.saturating_add(opens).saturating_sub(closes);
                 mod_stack.push((brace_depth, path));
@@ -82,7 +106,7 @@ pub(super) fn extract_rust(src: &str, file: &Path) -> Vec<DocItem> {
                 continue;
             }
 
-            let opens  = t.chars().filter(|&c| c == '{').count();
+            let opens = t.chars().filter(|&c| c == '{').count();
             let closes = t.chars().filter(|&c| c == '}').count();
             brace_depth = brace_depth.saturating_add(opens).saturating_sub(closes);
             while mod_stack.last().map_or(false, |&(d, _)| brace_depth < d) {
@@ -115,7 +139,11 @@ fn extract_mod_rest(t: &str) -> Option<&str> {
 }
 
 fn qualify_name(name: &str, ns: &str) -> String {
-    if name.is_empty() || ns.is_empty() { name.to_string() } else { format!("{ns}::{name}") }
+    if name.is_empty() || ns.is_empty() {
+        name.to_string()
+    } else {
+        format!("{ns}::{name}")
+    }
 }
 
 /// Convert Rust Markdown section headings into `@tag` equivalents so that
@@ -124,54 +152,71 @@ fn qualify_name(name: &str, ns: &str) -> String {
 /// Any heading level (`#`, `##`, `###`) is accepted.  Unknown headings are
 /// left unchanged and land in the body.
 fn normalize_sections(block: Vec<String>) -> Vec<String> {
-    block.into_iter().map(|line| {
-        let t = line.trim_start();
-        if !t.starts_with('#') { return line; }
-        let heading = t.trim_start_matches('#').trim().to_ascii_lowercase();
-        let tag = match heading.as_str() {
-            "examples" | "example"     => "@example",
-            "panics"   | "panic"       => "@panics",
-            "errors"   | "error"       => "@errors",
-            "safety"                   => "@safety",
-            "returns"  | "return value"=> "@returns",
-            "note"     | "notes"       => "@note",
-            "see also" | "see"         => "@see",
-            "deprecated"               => "@deprecated",
-            "since"                    => "@since",
-            "warning"  | "warnings"    => "@warning",
-            "arguments"| "parameters"  => "@arguments",
-            _                          => return line,
-        };
-        tag.to_string()
-    }).collect()
+    block
+        .into_iter()
+        .map(|line| {
+            let t = line.trim_start();
+            if !t.starts_with('#') {
+                return line;
+            }
+            let heading = t.trim_start_matches('#').trim().to_ascii_lowercase();
+            let tag = match heading.as_str() {
+                "examples" | "example" => "@example",
+                "panics" | "panic" => "@panics",
+                "errors" | "error" => "@errors",
+                "safety" => "@safety",
+                "returns" | "return value" => "@returns",
+                "note" | "notes" => "@note",
+                "see also" | "see" => "@see",
+                "deprecated" => "@deprecated",
+                "since" => "@since",
+                "warning" | "warnings" => "@warning",
+                "arguments" | "parameters" => "@arguments",
+                _ => return line,
+            };
+            tag.to_string()
+        })
+        .collect()
 }
 
 fn detect_rust_symbol(line: &str) -> (String, DocKind) {
     let words: Vec<&str> = line.split_whitespace().collect();
-    let skip = words.iter().take_while(|&&w| {
-        matches!(w, "pub" | "async" | "unsafe" | "extern" | "default")
-        || w.starts_with("pub(")
-        || w.starts_with('"')
-    }).count();
+    let skip = words
+        .iter()
+        .take_while(|&&w| {
+            matches!(w, "pub" | "async" | "unsafe" | "extern" | "default")
+                || w.starts_with("pub(")
+                || w.starts_with('"')
+        })
+        .count();
 
     let rest = &words[skip..];
-    if rest.is_empty() { return (String::new(), DocKind::Unknown); }
+    if rest.is_empty() {
+        return (String::new(), DocKind::Unknown);
+    }
 
     let keyword = rest[0];
-    let name_raw = rest.get(1).copied().unwrap_or("")
-        .split(['<', '(', '{', ':']).next().unwrap_or("");
-    let name = name_raw.trim_matches(|c: char| !c.is_alphanumeric() && c != '_').to_string();
+    let name_raw = rest
+        .get(1)
+        .copied()
+        .unwrap_or("")
+        .split(['<', '(', '{', ':'])
+        .next()
+        .unwrap_or("");
+    let name = name_raw
+        .trim_matches(|c: char| !c.is_alphanumeric() && c != '_')
+        .to_string();
 
     match keyword {
-        "fn"     => (name, DocKind::Function),
+        "fn" => (name, DocKind::Function),
         "struct" => (name, DocKind::Struct),
-        "enum"   => (name, DocKind::Enum),
-        "trait"  => (name, DocKind::Interface),
-        "type"   => (name, DocKind::Typedef),
-        "mod"    => (name, DocKind::Module),
-        "const"  => (name, DocKind::Variable),
+        "enum" => (name, DocKind::Enum),
+        "trait" => (name, DocKind::Interface),
+        "type" => (name, DocKind::Typedef),
+        "mod" => (name, DocKind::Module),
+        "const" => (name, DocKind::Variable),
         "static" => (name, DocKind::Variable),
-        "impl"   => {
+        "impl" => {
             if let Some(pos) = rest.iter().position(|w| *w == "for") {
                 let after = rest.get(pos + 1).copied().unwrap_or("");
                 let n = after.split('<').next().unwrap_or("").to_string();

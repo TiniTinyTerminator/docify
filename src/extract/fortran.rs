@@ -1,6 +1,6 @@
-use std::path::Path;
+use super::common::{build_item, ci_ident_after, first_ident, item_has_content, next_non_blank};
 use super::{DocExtractor, DocItem, DocKind, DocLanguage};
-use super::common::{build_item, item_has_content, next_non_blank, first_ident, ci_ident_after};
+use std::path::Path;
 
 pub struct FortranExtractor;
 
@@ -48,8 +48,18 @@ pub(super) fn extract_fortran(src: &str, file: &Path) -> Vec<DocItem> {
                 (name, kind)
             };
 
-            let item = build_item(block, name, kind, file, i + 1, DocLanguage::Fortran, sym.to_string());
-            if item_has_content(&item) { items.push(item); }
+            let item = build_item(
+                block,
+                name,
+                kind,
+                file,
+                i + 1,
+                DocLanguage::Fortran,
+                sym.to_string(),
+            );
+            if item_has_content(&item) {
+                items.push(item);
+            }
             i = end + 1;
             continue;
         }
@@ -60,11 +70,22 @@ pub(super) fn extract_fortran(src: &str, file: &Path) -> Vec<DocItem> {
 
 fn detect_fortran_variable(line: &str) -> Option<String> {
     let up = line.trim_start().to_ascii_uppercase();
-    let is_type = ["INTEGER", "REAL", "DOUBLE PRECISION", "COMPLEX",
-                   "LOGICAL", "CHARACTER", "TYPE("]
-        .iter().any(|k| up.starts_with(k));
-    if !is_type { return None; }
-    let name = line.find("::")
+    let is_type = [
+        "INTEGER",
+        "REAL",
+        "DOUBLE PRECISION",
+        "COMPLEX",
+        "LOGICAL",
+        "CHARACTER",
+        "TYPE(",
+    ]
+    .iter()
+    .any(|k| up.starts_with(k));
+    if !is_type {
+        return None;
+    }
+    let name = line
+        .find("::")
         .map(|p| first_ident(line[p + 2..].trim_start()))
         .filter(|n| !n.is_empty())?;
     Some(name)
@@ -91,8 +112,12 @@ fn detect_fortran_symbol(line: &str) -> (String, DocKind) {
     let up_sp = up.replace('(', " ").replace(')', " ");
     let tokens: Vec<&str> = up_sp.split_whitespace().collect();
 
-    if up.starts_with("MODULE SUBROUTINE ") { return (ci_ident_after(t, "module subroutine "), DocKind::Subroutine); }
-    if up.starts_with("MODULE FUNCTION ")   { return (ci_ident_after(t, "module function "),   DocKind::Function); }
+    if up.starts_with("MODULE SUBROUTINE ") {
+        return (ci_ident_after(t, "module subroutine "), DocKind::Subroutine);
+    }
+    if up.starts_with("MODULE FUNCTION ") {
+        return (ci_ident_after(t, "module function "), DocKind::Function);
+    }
 
     if let Some(pos) = tokens.iter().position(|w| *w == "SUBROUTINE") {
         if let Some(name_tok) = tokens.get(pos + 1) {

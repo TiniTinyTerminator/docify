@@ -1,11 +1,13 @@
-use std::path::Path;
+use super::common::{build_item, collect_line_block, item_has_content, next_non_blank};
 use super::{DocExtractor, DocItem, DocKind, DocLanguage};
-use super::common::{build_item, item_has_content, collect_line_block, next_non_blank};
+use std::path::Path;
 
 pub struct ZigExtractor;
 
 impl DocExtractor for ZigExtractor {
-    fn extensions(&self) -> &[&str] { &["zig"] }
+    fn extensions(&self) -> &[&str] {
+        &["zig"]
+    }
     fn extract(&self, path: &Path, src: &str) -> Vec<DocItem> {
         extract_zig(src, path)
     }
@@ -24,8 +26,18 @@ pub(super) fn extract_zig(src: &str, file: &Path) -> Vec<DocItem> {
             let (block, end) = collect_line_block(&lines, i, "///");
             let sym = next_non_blank(&lines, end + 1);
             let (name, kind) = detect_zig_symbol(sym);
-            let item = build_item(block, name, kind, file, i + 1, DocLanguage::Zig, sym.to_string());
-            if item_has_content(&item) { items.push(item); }
+            let item = build_item(
+                block,
+                name,
+                kind,
+                file,
+                i + 1,
+                DocLanguage::Zig,
+                sym.to_string(),
+            );
+            if item_has_content(&item) {
+                items.push(item);
+            }
             i = end + 1;
             continue;
         }
@@ -41,13 +53,27 @@ fn detect_zig_symbol(line: &str) -> (String, DocKind) {
     // Strip `pub` visibility prefix if present
     let t = t.strip_prefix("pub").map(|r| r.trim_start()).unwrap_or(t);
 
-    if let Some(r) = t.strip_prefix("fn ")     { return (first_ident_zig(r), DocKind::Function); }
-    if let Some(r) = t.strip_prefix("const ")  { return (first_ident_zig(r), DocKind::Variable); }
-    if let Some(r) = t.strip_prefix("var ")    { return (first_ident_zig(r), DocKind::Variable); }
-    if let Some(r) = t.strip_prefix("struct ") { return (first_ident_zig(r), DocKind::Struct); }
-    if let Some(r) = t.strip_prefix("enum ")   { return (first_ident_zig(r), DocKind::Enum); }
-    if let Some(r) = t.strip_prefix("union ")  { return (first_ident_zig(r), DocKind::Struct); }
-    if let Some(r) = t.strip_prefix("error ")  { return (first_ident_zig(r), DocKind::Enum); }
+    if let Some(r) = t.strip_prefix("fn ") {
+        return (first_ident_zig(r), DocKind::Function);
+    }
+    if let Some(r) = t.strip_prefix("const ") {
+        return (first_ident_zig(r), DocKind::Variable);
+    }
+    if let Some(r) = t.strip_prefix("var ") {
+        return (first_ident_zig(r), DocKind::Variable);
+    }
+    if let Some(r) = t.strip_prefix("struct ") {
+        return (first_ident_zig(r), DocKind::Struct);
+    }
+    if let Some(r) = t.strip_prefix("enum ") {
+        return (first_ident_zig(r), DocKind::Enum);
+    }
+    if let Some(r) = t.strip_prefix("union ") {
+        return (first_ident_zig(r), DocKind::Struct);
+    }
+    if let Some(r) = t.strip_prefix("error ") {
+        return (first_ident_zig(r), DocKind::Enum);
+    }
 
     (String::new(), DocKind::Unknown)
 }

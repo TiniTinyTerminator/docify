@@ -112,3 +112,39 @@ public enum CollectionKind {
     /** A first-in-first-out queue. */
     QUEUE
 }
+
+/**
+ * Immutable view of stack usage statistics.
+ *
+ * @param size Current number of elements.
+ * @param capacity Maximum number of elements.
+ */
+public record StackStats(int size, int capacity) {
+
+    /**
+     * Return the fraction of slots currently in use.
+     *
+     * @return A value in the range {@code [0.0, 1.0]}.
+     */
+    public double loadFactor() {
+        return capacity == 0 ? 0.0 : (double) size / capacity;
+    }
+}
+
+/**
+ * Utility methods for working with primitive collection examples.
+ */
+public final class CollectionMath {
+
+    /**
+     * Clamp {@code value} into the inclusive range {@code [min, max]}.
+     *
+     * @param value Value to clamp.
+     * @param min Lower bound.
+     * @param max Upper bound.
+     * @return The clamped value.
+     */
+    public static int clamp(int value, int min, int max) {
+        return Math.max(min, Math.min(max, value));
+    }
+}

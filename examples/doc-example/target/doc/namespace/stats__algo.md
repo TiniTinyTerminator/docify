@@ -8,8 +8,8 @@
 
 | Signature | Summary |
 |-----------|---------|
-| [`fn linreg(const std::vector<double>& xs, const std::vector<double>& ys) -> LinRegResult`](#fn-linreg) | Ordinary least-squares linear regression.  Fits the model $y = a x + b$ by minimising $\sum(y_i - a x_i - b)^2$. |
-| [`fn covariance(const std::vector<double>& xs, const std::vector<double>& ys) -> double`](#fn-covariance) | Covariance of two equal-length samples.  $\text{Cov}(X,Y) = \frac{1}{n-1}\sum (x_i - \bar{x})(y_i - \bar{y})$ |
+| [`LinRegResult linreg(const std::vector<double>& xs, const std::vector<double>& ys)`](#fn-linreg) | Ordinary least-squares linear regression.  Fits the model $y = a x + b$ by minimising $\sum(y_i - a x_i - b)^2$. |
+| [`double covariance(const std::vector<double>& xs, const std::vector<double>& ys)`](#fn-covariance) | Covariance of two equal-length samples.  $\text{Cov}(X,Y) = \frac{1}{n-1}\sum (x_i - \bar{x})(y_i - \bar{y})$ |
 
 ---
 
@@ -21,7 +21,7 @@
 <sub>line 84</sub>
 
 ```
-fn linreg(const std::vector<double>& xs, const std::vector<double>& ys) -> LinRegResult
+LinRegResult linreg(const std::vector<double>& xs, const std::vector<double>& ys)
 ```
 
 Ordinary least-squares linear regression.  Fits the model $y = a x + b$ by minimising $\sum(y_i - a x_i - b)^2$.
@@ -53,7 +53,7 @@ Ordinary least-squares linear regression.  Fits the model $y = a x + b$ by minim
 <sub>line 97</sub>
 
 ```
-fn covariance(const std::vector<double>& xs, const std::vector<double>& ys) -> double
+double covariance(const std::vector<double>& xs, const std::vector<double>& ys)
 ```
 
 Covariance of two equal-length samples.  $\text{Cov}(X,Y) = \frac{1}{n-1}\sum (x_i - \bar{x})(y_i - \bar{y})$

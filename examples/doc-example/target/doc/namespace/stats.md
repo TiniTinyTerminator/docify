@@ -14,12 +14,10 @@
 
 | Signature | Summary |
 |-----------|---------|
-| [`fn mean(const std::vector<double>& xs) -> double`](#fn-mean) | Arithmetic mean of a sample. |
-| [`fn variance(const std::vector<double>& xs) -> double`](#fn-variance) | Sample variance (unbiased, Bessel-corrected).  Uses $s^2 = \frac{1}{n-1}\sum(x_i - \bar{x})^2$. |
-| [`fn stddev(const std::vector<double>& xs) -> double`](#fn-stddev) | Standard deviation of a sample. |
-| [`fn pearson(const std::vector<double>& xs, const std::vector<double>& ys) -> double`](#fn-pearson) | Pearson correlation coefficient between two equal-length samples.  Returns a value in $[-1, 1]$.  Returns NaN when either sample has zero variance. |
-| [`fn median() -> double`](#fn-median) | Median of the sample. |
-| [`fn percentile(double p) -> double`](#fn-percentile) | Percentile via linear interpolation. |
+| [`double mean(const std::vector<double>& xs)`](#fn-mean) | Arithmetic mean of a sample. |
+| [`double variance(const std::vector<double>& xs)`](#fn-variance) | Sample variance (unbiased, Bessel-corrected).  Uses $s^2 = \frac{1}{n-1}\sum(x_i - \bar{x})^2$. |
+| [`double stddev(const std::vector<double>& xs)`](#fn-stddev) | Standard deviation of a sample. |
+| [`double pearson(const std::vector<double>& xs, const std::vector<double>& ys)`](#fn-pearson) | Pearson correlation coefficient between two equal-length samples.  Returns a value in $[-1, 1]$.  Returns NaN when either sample has zero variance. |
 
 ---
 
@@ -31,7 +29,7 @@
 <sub>line 17</sub>
 
 ```
-fn mean(const std::vector<double>& xs) -> double
+double mean(const std::vector<double>& xs)
 ```
 
 Arithmetic mean of a sample.
@@ -60,7 +58,7 @@ Arithmetic mean of a sample.
 <sub>line 26</sub>
 
 ```
-fn variance(const std::vector<double>& xs) -> double
+double variance(const std::vector<double>& xs)
 ```
 
 Sample variance (unbiased, Bessel-corrected).  Uses $s^2 = \frac{1}{n-1}\sum(x_i - \bar{x})^2$.
@@ -89,7 +87,7 @@ Sample variance (unbiased, Bessel-corrected).  Uses $s^2 = \frac{1}{n-1}\sum(x_i
 <sub>line 37</sub>
 
 ```
-fn stddev(const std::vector<double>& xs) -> double
+double stddev(const std::vector<double>& xs)
 ```
 
 Standard deviation of a sample.
@@ -116,7 +114,7 @@ Standard deviation of a sample.
 <sub>line 42</sub>
 
 ```
-fn pearson(const std::vector<double>& xs, const std::vector<double>& ys) -> double
+double pearson(const std::vector<double>& xs, const std::vector<double>& ys)
 ```
 
 Pearson correlation coefficient between two equal-length samples.  Returns a value in $[-1, 1]$.  Returns NaN when either sample has zero variance.
@@ -135,46 +133,6 @@ Pearson correlation coefficient between two equal-length samples.  Returns a val
 </table>
 
 **Returns:** $r \in [-1, 1]$.
-
----
-
-<a id="fn-median"></a>
-## fn `median`
-
-<sub>line 65</sub>
-
-```
-fn median() -> double
-```
-
-Median of the sample.
-
----
-
-<a id="fn-percentile"></a>
-## fn `percentile`
-
-<sub>line 68</sub>
-
-```
-fn percentile(double p) -> double
-```
-
-Percentile via linear interpolation.
-
-<table style="border-collapse: collapse; margin: 0.75rem 0 1rem; font-size: 0.92em;">
-  <thead>
-    <tr style="background: #eaf4ff; color: #0b3d68;">
-      <th style="border: 1px solid #b6d7f2; padding: 0.25rem 0.5rem; text-align: left;">Parameter</th>
-      <th style="border: 1px solid #b6d7f2; padding: 0.25rem 0.5rem; text-align: left;">Description</th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr style="background: #ffffff;"><td style="border: 1px solid #d0e3f4; padding: 0.2rem 0.5rem; white-space: nowrap;"><code>p</code></td><td style="border: 1px solid #d0e3f4; padding: 0.2rem 0.5rem;">Percentile in [0, 100].</td></tr>
-  </tbody>
-</table>
-
-**Returns:** Interpolated value.
 
 ---
 

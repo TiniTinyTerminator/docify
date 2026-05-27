@@ -22,6 +22,10 @@ pub fn word_wrap(text: &str, width: usize) -> Vec<String> {
             result.push(String::new());
             continue;
         }
+        if is_preformatted_line(para) {
+            result.push(para.to_owned());
+            continue;
+        }
         let indent: String = para.chars().take_while(|c| c.is_whitespace()).collect();
         let effective_width = width.saturating_sub(indent.len());
         let mut cur = String::new();
@@ -43,6 +47,46 @@ pub fn word_wrap(text: &str, width: usize) -> Vec<String> {
         }
     }
     result
+}
+
+fn is_preformatted_line(line: &str) -> bool {
+    contains_box_drawing(line) || contains_nonleading_repeated_spaces(line)
+}
+
+fn contains_box_drawing(line: &str) -> bool {
+    line.chars().any(|ch| {
+        matches!(
+            ch,
+            '─' | '━'
+                | '│'
+                | '┃'
+                | '┌'
+                | '┐'
+                | '└'
+                | '┘'
+                | '├'
+                | '┤'
+                | '┬'
+                | '┴'
+                | '┼'
+                | '╭'
+                | '╮'
+                | '╰'
+                | '╯'
+                | '⎛'
+                | '⎞'
+                | '⎝'
+                | '⎠'
+                | '⎮'
+                | '⌠'
+                | '⌡'
+        )
+    })
+}
+
+fn contains_nonleading_repeated_spaces(line: &str) -> bool {
+    let trimmed = line.trim_start_matches(' ');
+    trimmed.contains("  ")
 }
 
 /// Truncate `s` to at most `max` bytes, appending `…` if truncated.
@@ -97,4 +141,21 @@ pub fn render_empty_panel(f: &mut Frame, title: &str, hint: &str, area: Rect) {
     f.render_widget(block, area);
     let p = Paragraph::new(hint).style(Style::default().fg(COLOR_CONTENT));
     f.render_widget(p, inner);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::word_wrap;
+
+    #[test]
+    fn word_wrap_preserves_box_drawing_math_layout() {
+        let line = "│f(t)            │ 𝓛[f(t)]=F(s) │";
+        assert_eq!(word_wrap(line, 12), vec![line.to_string()]);
+    }
+
+    #[test]
+    fn word_wrap_preserves_repeated_internal_spaces() {
+        let line = "e  f(t)         F(s-a)";
+        assert_eq!(word_wrap(line, 10), vec![line.to_string()]);
+    }
 }

@@ -43,9 +43,43 @@ pub fn render_math_lines_with(text: &str, mode: Mode) -> String {
     let mut s = protected;
     for r in &regions {
         let rendered = render_math_block_with(&r.raw, mode);
-        s = s.replace(&r.placeholder, &rendered);
+        s = replace_math_placeholder(&s, &r.placeholder, &rendered);
     }
     s
+}
+
+fn replace_math_placeholder(text: &str, placeholder: &str, rendered: &str) -> String {
+    let Some(pos) = text.find(placeholder) else {
+        return text.to_string();
+    };
+    if !rendered.contains('\n') {
+        return text.replacen(placeholder, rendered, 1);
+    }
+
+    let line_start = text[..pos].rfind('\n').map_or(0, |idx| idx + 1);
+    let after_placeholder = pos + placeholder.len();
+    let line_end = text[after_placeholder..]
+        .find('\n')
+        .map_or(text.len(), |idx| after_placeholder + idx);
+    let prefix = &text[line_start..pos];
+    let suffix = &text[after_placeholder..line_end];
+    let indent_width = prefix.chars().count();
+    let indent = " ".repeat(indent_width);
+    let mut out = String::new();
+    out.push_str(&text[..line_start]);
+    out.push_str(prefix);
+    for (idx, line) in rendered.lines().enumerate() {
+        if idx > 0 {
+            out.push('\n');
+            out.push_str(&indent);
+        }
+        out.push_str(line);
+        if idx == 0 {
+            out.push_str(suffix);
+        }
+    }
+    out.push_str(&text[line_end..]);
+    out
 }
 
 fn strip_delimiters(raw: &str) -> &str {
@@ -1148,6 +1182,7 @@ fn render_pow(base: &Expr, exp: &Expr, mode: Mode) -> (String, Prec) {
         sb
     };
     let (se, pe) = render_expr(exp, mode);
+    let se = compact_script_text(&se);
     if mode == Mode::Unicode {
         if let Some(sup) = to_superscript(&se) {
             return (format!("{sb}{sup}"), Prec::Pow);
@@ -1169,6 +1204,7 @@ fn render_sub(base: &Expr, sub: &Expr, mode: Mode) -> (String, Prec) {
         sb
     };
     let (ss, ps) = render_expr(sub, mode);
+    let ss = compact_script_text(&ss);
     if mode == Mode::Unicode {
         if let Some(sub_uni) = to_subscript(&ss) {
             return (format!("{sb}{sub_uni}"), Prec::Pow);
@@ -1180,6 +1216,18 @@ fn render_sub(base: &Expr, sub: &Expr, mode: Mode) -> (String, Prec) {
         format!("({ss})")
     };
     (format!("{sb}_{sub_str}"), Prec::Pow)
+}
+
+fn compact_script_text(s: &str) -> String {
+    if s.contains(' ')
+        && s.chars()
+            .filter(|ch| !ch.is_whitespace())
+            .all(char::is_alphanumeric)
+    {
+        s.chars().filter(|ch| !ch.is_whitespace()).collect()
+    } else {
+        s.to_string()
+    }
 }
 
 fn render_primed(base: &Expr, n: usize, mode: Mode) -> (String, Prec) {
@@ -1960,6 +2008,22 @@ fn sub_char(c: char) -> Option<char> {
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
+#[cfg(test)]
+mod alignment_tests {
+    use super::replace_math_placeholder;
+
+    #[test]
+    fn multiline_math_keeps_followup_lines_under_placeholder_column() {
+        let text = "value: @FREIGHTMATH0@ done";
+        let rendered = " α\n───\n β";
+
+        assert_eq!(
+            replace_math_placeholder(text, "@FREIGHTMATH0@", rendered),
+            "value:  α done\n       ───\n        β"
+        );
+    }
+}
+
 #[cfg(all(test, not(feature = "libtexprintf")))]
 mod tests {
     use super::*;
@@ -2017,6 +2081,12 @@ mod tests {
     fn unicode_superscript_for_digits() {
         assert_eq!(r("x^2"), "x²");
         assert_eq!(r("x^{12}"), "x¹²");
+    }
+
+    #[test]
+    fn grouped_multi_letter_scripts_are_compacted() {
+        assert_eq!(r("x_{ij}"), "xᵢⱼ");
+        assert_eq!(r("x^{ij}"), "xⁱʲ");
     }
 
     #[test]

@@ -77,7 +77,7 @@ impl TreeNode {
             format!("{}\u{1f}{label}", self.key)
         };
         self.children
-            .entry(label.to_ascii_lowercase())
+            .entry(label.clone())
             .or_insert_with(|| TreeNode {
                 key,
                 label: label.clone(),
@@ -86,13 +86,13 @@ impl TreeNode {
             .insert(rest, item_idx, group_item, source_item);
 
         if rest.is_empty() && group_item {
-            if let Some(node) = self.children.get_mut(&label.to_ascii_lowercase()) {
+            if let Some(node) = self.children.get_mut(label) {
                 node.item_idx = Some(item_idx);
                 node.items.retain(|&idx| idx != item_idx);
             }
         }
-        if rest.is_empty() && source_item {
-            if let Some(node) = self.children.get_mut(&label.to_ascii_lowercase()) {
+        if source_item {
+            if let Some(node) = self.children.get_mut(label) {
                 node.source_idx.get_or_insert(item_idx);
             }
         }
@@ -1842,19 +1842,137 @@ fn linkable_text_line(
     base_style: Style,
 ) -> Line<'static> {
     let mut spans = Vec::new();
-    let mut token = String::new();
-    let mut token_start = 0usize;
     let mut col = 0usize;
+    push_markdown_linkable_spans(
+        &mut spans,
+        text,
+        all,
+        current_idx,
+        lang,
+        line_no,
+        links,
+        base_style,
+        &mut col,
+    );
+    Line::from(spans)
+}
+
+fn push_markdown_linkable_spans(
+    spans: &mut Vec<Span<'static>>,
+    mut text: &str,
+    all: &[DocItem],
+    current_idx: Option<usize>,
+    lang: &DocLanguage,
+    line_no: usize,
+    links: &mut Vec<DetailLink>,
+    base_style: Style,
+    col: &mut usize,
+) {
+    while !text.is_empty() {
+        if let Some(after) = text.strip_prefix('`') {
+            if let Some(end) = after.find('`') {
+                let code = &after[..end];
+                spans.push(Span::styled(
+                    code.to_string(),
+                    Style::default().fg(Color::Rgb(210, 170, 110)),
+                ));
+                *col += code.chars().count();
+                text = &after[end + 1..];
+                continue;
+            }
+        }
+
+        if let Some(after) = text.strip_prefix("**") {
+            if let Some(end) = after.find("**") {
+                push_plain_linkable_segment(
+                    spans,
+                    &after[..end],
+                    all,
+                    current_idx,
+                    lang,
+                    line_no,
+                    links,
+                    base_style.add_modifier(Modifier::BOLD),
+                    col,
+                );
+                text = &after[end + 2..];
+                continue;
+            }
+        }
+
+        if text.starts_with('*') && !text.starts_with("**") {
+            let after = &text[1..];
+            if let Some(end) = after.find('*') {
+                push_plain_linkable_segment(
+                    spans,
+                    &after[..end],
+                    all,
+                    current_idx,
+                    lang,
+                    line_no,
+                    links,
+                    base_style.add_modifier(Modifier::ITALIC),
+                    col,
+                );
+                text = &after[end + 1..];
+                continue;
+            }
+        }
+
+        let next_marker = ["`", "**", "*"]
+            .iter()
+            .filter_map(|marker| text.find(marker))
+            .filter(|&idx| idx > 0)
+            .min()
+            .unwrap_or(text.len());
+        let (plain, rest) = text.split_at(next_marker);
+        if plain.is_empty() {
+            let Some(ch) = text.chars().next() else {
+                break;
+            };
+            spans.push(Span::styled(ch.to_string(), base_style));
+            *col += 1;
+            text = &text[ch.len_utf8()..];
+        } else {
+            push_plain_linkable_segment(
+                spans,
+                plain,
+                all,
+                current_idx,
+                lang,
+                line_no,
+                links,
+                base_style,
+                col,
+            );
+            text = rest;
+        }
+    }
+}
+
+fn push_plain_linkable_segment(
+    spans: &mut Vec<Span<'static>>,
+    text: &str,
+    all: &[DocItem],
+    current_idx: Option<usize>,
+    lang: &DocLanguage,
+    line_no: usize,
+    links: &mut Vec<DetailLink>,
+    base_style: Style,
+    col: &mut usize,
+) {
+    let mut token = String::new();
+    let mut token_start = *col;
 
     for ch in text.chars() {
         if ch.is_alphanumeric() || ch == '_' || ch == ':' || ch == '.' {
             if token.is_empty() {
-                token_start = col;
+                token_start = *col;
             }
             token.push(ch);
         } else {
             push_linkable_text_token(
-                &mut spans,
+                spans,
                 &token,
                 token_start,
                 all,
@@ -1867,10 +1985,10 @@ fn linkable_text_line(
             token.clear();
             spans.push(Span::styled(ch.to_string(), base_style));
         }
-        col += 1;
+        *col += 1;
     }
     push_linkable_text_token(
-        &mut spans,
+        spans,
         &token,
         token_start,
         all,
@@ -1880,8 +1998,6 @@ fn linkable_text_line(
         links,
         base_style,
     );
-
-    Line::from(spans)
 }
 
 fn push_linkable_text_token(
@@ -1956,9 +2072,7 @@ fn find_doc_target(
     all.iter()
         .enumerate()
         .filter(|(idx, item)| {
-            Some(*idx) != current_idx
-                && &item.lang == lang
-                && !is_class_or_constructor(item)
+            Some(*idx) != current_idx && &item.lang == lang && !is_class_or_constructor(item)
         })
         .find(|(_, item)| item_matches_ref(item, needle))
         .map(|(idx, _)| idx)
@@ -1983,9 +2097,7 @@ fn is_class_or_constructor(item: &DocItem) -> bool {
     }
     // C/C++ constructors: Function whose unqualified name equals its parent
     // scope's unqualified name (e.g. `Foo::Foo` or `ns::Foo::Foo`).
-    if matches!(item.lang, DocLanguage::C | DocLanguage::Cpp)
-        && item.kind == DocKind::Function
-    {
+    if matches!(item.lang, DocLanguage::C | DocLanguage::Cpp) && item.kind == DocKind::Function {
         if let Some((parent, ctor)) = item.name.rsplit_once("::") {
             let parent_simple = simple_name(parent);
             if parent_simple == ctor {
@@ -2279,6 +2391,13 @@ fn is_group_doc_item(item: &DocItem) -> bool {
         )
 }
 
+fn is_type_group_doc_item(item: &DocItem) -> bool {
+    matches!(
+        item.kind,
+        DocKind::Class | DocKind::Struct | DocKind::Interface
+    ) && !item.name.is_empty()
+}
+
 fn language_group_label(lang: &DocLanguage) -> &'static str {
     match lang {
         DocLanguage::C | DocLanguage::Cpp => "C/C++",
@@ -2307,6 +2426,9 @@ fn item_group_parts(item: &DocItem) -> Vec<String> {
             parts
         }
         DocLanguage::Rust => {
+            if is_type_group_doc_item(item) {
+                return split_scope(&item.name);
+            }
             if matches!(item.kind, DocKind::Module) && !item.name.is_empty() {
                 return split_scope(&item.name);
             }
@@ -2318,6 +2440,9 @@ fn item_group_parts(item: &DocItem) -> Vec<String> {
             }
         }
         DocLanguage::Ada | DocLanguage::D | DocLanguage::Go | DocLanguage::Fortran => {
+            if is_type_group_doc_item(item) {
+                return split_scope(&item.name);
+            }
             let parts = split_scope_prefix(&item.name, ".");
             if parts.is_empty() {
                 vec!["(root)".to_string()]
@@ -2326,6 +2451,9 @@ fn item_group_parts(item: &DocItem) -> Vec<String> {
             }
         }
         DocLanguage::Java | DocLanguage::Kotlin | DocLanguage::Swift | DocLanguage::Zig => {
+            if is_type_group_doc_item(item) {
+                return split_scope(&item.name);
+            }
             let parent = item
                 .meta
                 .parent
@@ -2422,4 +2550,113 @@ fn section_header(label: &str) -> Line<'static> {
             .fg(COLOR_SECTION)
             .add_modifier(Modifier::BOLD),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use ratatui::style::{Color, Modifier, Style};
+
+    use super::{item_group_parts, linkable_text_line, TreeNode};
+    use crate::extract::{DocItem, DocKind, DocLanguage, DocMeta};
+
+    #[test]
+    fn tree_nodes_do_not_merge_case_distinct_labels() {
+        let mut root = TreeNode::default();
+        root.insert(&["Rust".into(), "Foo".into()], 0, false, true);
+        root.insert(&["Rust".into(), "foo".into()], 1, false, true);
+
+        let rust = root.children.get("Rust").expect("language group exists");
+        assert!(rust.children.contains_key("Foo"));
+        assert!(rust.children.contains_key("foo"));
+        assert_eq!(rust.children.len(), 2);
+    }
+
+    #[test]
+    fn tree_nodes_keep_source_targets_on_ancestor_groups() {
+        let mut root = TreeNode::default();
+        root.insert(
+            &[
+                "C/C++".into(),
+                "stats.h".into(),
+                "stats".into(),
+                "OrderStatistics".into(),
+            ],
+            7,
+            false,
+            true,
+        );
+
+        let lang = root.children.get("C/C++").expect("language group exists");
+        let file = lang.children.get("stats.h").expect("file group exists");
+        let namespace = file.children.get("stats").expect("namespace group exists");
+        let class = namespace
+            .children
+            .get("OrderStatistics")
+            .expect("class group exists");
+
+        assert_eq!(lang.source_idx, Some(7));
+        assert_eq!(file.source_idx, Some(7));
+        assert_eq!(namespace.source_idx, Some(7));
+        assert_eq!(class.source_idx, Some(7));
+    }
+
+    #[test]
+    fn rust_struct_doc_routes_to_own_type_group() {
+        let item = item("Builder", DocKind::Struct, DocLanguage::Rust);
+        assert_eq!(item_group_parts(&item), vec!["Builder".to_string()]);
+    }
+
+    #[test]
+    fn java_class_doc_routes_to_own_type_group() {
+        let item = item("collections.IntStack", DocKind::Class, DocLanguage::Java);
+        assert_eq!(
+            item_group_parts(&item),
+            vec!["collections".to_string(), "IntStack".to_string()]
+        );
+    }
+
+    #[test]
+    fn markdown_inline_styles_are_rendered_without_markers() {
+        let mut links = Vec::new();
+        let line = linkable_text_line(
+            "use **bold** and *italic* plus `code`",
+            &[],
+            None,
+            &DocLanguage::Rust,
+            0,
+            &mut links,
+            Style::default().fg(Color::White),
+        );
+        let text: String = line
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect();
+
+        assert_eq!(text, "use bold and italic plus code");
+        assert!(line.spans.iter().any(|span| span.content.as_ref() == "bold"
+            && span.style.add_modifier.contains(Modifier::BOLD)));
+        assert!(line
+            .spans
+            .iter()
+            .any(|span| span.content.as_ref() == "italic"
+                && span.style.add_modifier.contains(Modifier::ITALIC)));
+    }
+
+    fn item(name: &str, kind: DocKind, lang: DocLanguage) -> DocItem {
+        DocItem {
+            name: name.to_string(),
+            kind,
+            brief: String::new(),
+            body: String::new(),
+            tags: Vec::new(),
+            file: PathBuf::from("src/lib.rs"),
+            line: 1,
+            lang,
+            signature: String::new(),
+            meta: DocMeta::default(),
+        }
+    }
 }

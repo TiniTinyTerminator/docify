@@ -468,11 +468,39 @@ pub fn run_doc_browser(dirs: &[&Path]) -> anyhow::Result<()> {
         all_items.extend(crate::extract::extract_dir(dir).items);
     }
 
+    // Dedup across multiple scan dirs: same symbol from a parent dir and a
+    // subdirectory that was also added (e.g. via project manifest path-deps).
+    // Key on (name, file, line); keep whichever copy has more tags/content.
+    let all_items = dedup_items(all_items);
+
     let mut terminal = enter_tui()?;
     let result = run_loop(&mut terminal, all_items);
     leave_tui(&mut terminal)?;
 
     result
+}
+
+fn dedup_items(items: Vec<crate::extract::DocItem>) -> Vec<crate::extract::DocItem> {
+    use std::collections::HashMap;
+    let mut seen: HashMap<(String, std::path::PathBuf, usize), usize> = HashMap::new();
+    let mut out: Vec<crate::extract::DocItem> = Vec::new();
+    for item in items {
+        let key = (item.name.clone(), item.file.clone(), item.line);
+        let score = item.tags.len() * 10 + item.brief.len() + item.body.len();
+        match seen.get(&key).copied() {
+            Some(idx) => {
+                let prev = out[idx].tags.len() * 10 + out[idx].brief.len() + out[idx].body.len();
+                if score > prev {
+                    out[idx] = item;
+                }
+            }
+            None => {
+                seen.insert(key, out.len());
+                out.push(item);
+            }
+        }
+    }
+    out
 }
 
 // ── Event loop ────────────────────────────────────────────────────────────────

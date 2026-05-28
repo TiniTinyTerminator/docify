@@ -20,7 +20,6 @@ path = "src/main.rs"
 default      = []
 clang        = ["dep:clang"]
 rich-math    = []
-libtexprintf = ["rich-math", "dep:libtexprintf", "libtexprintf/native"]
 
 [dependencies]
 walkdir        = "2"
@@ -33,4 +32,3 @@ anyhow         = "1"
 ratatui        = "0.30"
 crossterm      = "0.29"
 clang          = { version = "2", optional = true, features = ["runtime"] }
-libtexprintf   = { path = "../libtexprintf", optional = true, default-features = false }

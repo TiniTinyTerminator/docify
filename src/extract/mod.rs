@@ -1,6 +1,8 @@
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
+use serde::{Deserialize, Serialize};
+
 mod ada;
 pub mod common;
 mod cpp;
@@ -19,7 +21,7 @@ pub(crate) use common::{build_item, item_has_content};
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum DocLanguage {
     C,
     Cpp,
@@ -54,7 +56,7 @@ impl DocLanguage {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DocKind {
     Function,
     Struct,
@@ -87,7 +89,7 @@ impl DocKind {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TagKind {
     Brief,
     Param,
@@ -118,7 +120,7 @@ impl TagKind {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DocTag {
     pub kind: TagKind,
     /// Parameter name for `@param`; `None` for all other tag types.
@@ -127,7 +129,7 @@ pub struct DocTag {
 }
 
 /// Access level of a class / struct member.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Access {
     Public,
     Protected,
@@ -136,7 +138,7 @@ pub enum Access {
 
 /// Structured metadata populated by language-aware extractors (libclang, etc.).
 /// Defaults to empty so heuristic extractors compile without changes.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct DocMeta {
     /// Template parameter list, e.g. `["typename T", "int N"]`.
     pub template_params: Vec<String>,
@@ -152,7 +154,7 @@ pub struct DocMeta {
     pub group: Option<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DocItem {
     pub name: String,
     pub kind: DocKind,
@@ -467,6 +469,7 @@ fn strip_c_fn_quals(s: &str) -> &str {
     t
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DocSet {
     pub items: Vec<DocItem>,
     pub source_root: PathBuf,
@@ -662,8 +665,13 @@ fn dedup(items: Vec<DocItem>, source_root: &Path) -> DocSet {
     let mut seen: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
     let mut deduped: Vec<DocItem> = Vec::new();
     for item in items {
+        let key = if item.name.is_empty() {
+            format!("{}:{:?}", item.file.display(), item.kind)
+        } else {
+            item.name.clone()
+        };
         let score = item.tags.len() * 10 + item.brief.len() + item.body.len();
-        match seen.get(&item.name).copied() {
+        match seen.get(&key).copied() {
             Some(idx) => {
                 let prev = deduped[idx].tags.len() * 10
                     + deduped[idx].brief.len()
@@ -673,7 +681,7 @@ fn dedup(items: Vec<DocItem>, source_root: &Path) -> DocSet {
                 }
             }
             None => {
-                seen.insert(item.name.clone(), deduped.len());
+                seen.insert(key, deduped.len());
                 deduped.push(item);
             }
         }
@@ -752,6 +760,28 @@ void sort(int *arr, size_t len);"#;
             .filter(|t| t.kind == TagKind::Return)
             .collect();
         assert_eq!(ret.len(), 1);
+    }
+
+    #[test]
+    fn c_brief_stops_at_blank_before_markdown_table() {
+        let src = r#"/**
+ * @brief Adaptive Simpson's rule.
+ *
+ * Uses recursive subdivision.
+ *
+ * | Parameter | Meaning |
+ * |-----------|---------|
+ * | `f` | Integrand |
+ *
+ * @return Approximation.
+ */
+double integrate(double (*f)(double), double a, double b, double eps);"#;
+        let got = items(src, &DocLanguage::C);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].brief, "Adaptive Simpson's rule.");
+        assert!(got[0].body.contains("Uses recursive subdivision."));
+        assert!(got[0].body.contains("| Parameter | Meaning |"));
+        assert!(got[0].body.contains("| `f` | Integrand |"));
     }
 
     #[test]
@@ -1072,6 +1102,39 @@ void sort(int *arr, size_t len);"#;
     }
 
     #[test]
+    fn c_block_captures_multiline_signature() {
+        let src = r#"/** Integrate a function. */
+double integrate(
+    double (*f)(double),
+    double a,
+    double b,
+    double eps
+);"#;
+        let got = items(src, &DocLanguage::C);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].name, "integrate");
+        assert!(got[0].signature.contains("double (*f)(double),"));
+        assert!(got[0].signature.contains("\n);"));
+    }
+
+    #[test]
+    fn c_block_captures_full_multiline_typedef() {
+        let src = r#"/** Dispatch type. */
+typedef cc_ht_map<Key,
+                  Mapped,
+                  at0t,
+                  at1t,
+                  _Alloc,
+                  false>
+    type;"#;
+        let got = items(src, &DocLanguage::Cpp);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].name, "type");
+        assert!(got[0].signature.contains("_Alloc,"));
+        assert!(got[0].signature.contains("type;"));
+    }
+
+    #[test]
     fn rust_fn_captures_signature() {
         let src = "/// Return factorial.\npub fn factorial(n: u64) -> u64 { todo!() }";
         let got = items(src, &DocLanguage::Rust);
@@ -1129,6 +1192,23 @@ class Point {
         assert_eq!(got[0].name, "Point");
         assert!(matches!(got[0].kind, DocKind::Class));
         assert_eq!(got[0].brief, "2-D point type.");
+    }
+
+    #[test]
+    fn cpp_undocumented_namespace_has_source_item() {
+        let src = r#"namespace stats {
+/** Arithmetic mean. */
+double mean(double x, double y);
+}"#;
+        let got = items(src, &DocLanguage::Cpp);
+        let ns = got
+            .iter()
+            .find(|item| item.kind == DocKind::Module && item.name == "stats")
+            .expect("namespace should be represented for source jumps");
+        assert_eq!(ns.line, 1);
+        assert_eq!(ns.signature, "namespace stats {");
+        assert!(ns.brief.is_empty());
+        assert!(got.iter().any(|item| item.name == "stats::mean"));
     }
 
     #[test]
@@ -1195,10 +1275,26 @@ class Stack {};
     }
 
     #[test]
+    fn c_anonymous_typedef_struct_uses_alias_name() {
+        let src = r#"/** Fixed-size vector. */
+typedef struct {
+    double x;
+    double y;
+} Vec2;"#;
+        let got = items(src, &DocLanguage::C);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].name, "Vec2");
+        assert!(matches!(got[0].kind, DocKind::Typedef));
+        assert!(got[0].signature.contains("} Vec2;"));
+    }
+
+    #[test]
     fn cpp_using_alias() {
         let src = "/** Convenience alias for a string map. */\nusing StringMap = std::map<std::string, std::string>;";
         let got = items(src, &DocLanguage::Cpp);
         assert_eq!(got.len(), 1);
+        assert_eq!(got[0].name, "StringMap");
+        assert!(matches!(got[0].kind, DocKind::Typedef));
         assert_eq!(got[0].brief, "Convenience alias for a string map.");
     }
 
@@ -1250,9 +1346,14 @@ static Point from_polar(double r, double theta);"#;
 double clamp(double x, double lo, double hi);
 } // namespace math"#;
         let got = items(src, &DocLanguage::Cpp);
-        assert_eq!(got.len(), 1);
-        assert_eq!(got[0].name, "math::clamp");
-        assert_eq!(got[0].brief, "Clamp x to [lo, hi].");
+        assert!(got
+            .iter()
+            .any(|item| item.name == "math" && item.kind == DocKind::Module && item.line == 1));
+        let clamp = got
+            .iter()
+            .find(|item| item.name == "math::clamp")
+            .expect("namespace function should be qualified");
+        assert_eq!(clamp.brief, "Clamp x to [lo, hi].");
     }
 
     #[test]
@@ -1264,8 +1365,13 @@ void nested();
 } // namespace inner
 } // namespace outer"#;
         let got = items(src, &DocLanguage::Cpp);
-        assert_eq!(got.len(), 1);
-        assert_eq!(got[0].name, "outer::inner::nested");
+        assert!(got
+            .iter()
+            .any(|item| item.name == "outer" && item.kind == DocKind::Module && item.line == 1));
+        assert!(got.iter().any(|item| item.name == "outer::inner"
+            && item.kind == DocKind::Module
+            && item.line == 2));
+        assert!(got.iter().any(|item| item.name == "outer::inner::nested"));
     }
 
     #[test]
@@ -1676,6 +1782,20 @@ public void parse(String s) {}"#;
         assert!(other_tag(&item, "file").is_some());
         assert!(other_tag(&item, "ingroup").is_some());
         assert!(other_tag(&item, "par").is_some());
+    }
+
+    #[test]
+    fn c_file_doc_is_extracted_as_file_module() {
+        let src = "/**\n * @file mathlib.h\n * @brief Header docs.\n *\n * Longer file description.\n */\n#ifndef MATHLIB_H\n#define MATHLIB_H\nint f(void);\n#endif";
+        let got = items(src, &DocLanguage::C);
+        let file = got
+            .iter()
+            .find(|item| item.kind == DocKind::Module && item.name.is_empty())
+            .expect("@file block should become a file/module doc item");
+
+        assert_eq!(file.brief, "Header docs.");
+        assert!(file.body.contains("Longer file description."));
+        assert!(other_tag(file, "file").is_some());
     }
 
     #[test]

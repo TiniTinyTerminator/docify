@@ -50,28 +50,36 @@ pub(super) fn extract_c_style(src: &str, file: &Path, lang: &DocLanguage) -> Vec
             let (block, end) = collect_c_block(&lines, i);
             apply_group_directives(&block, &mut group_stack, &mut pending_group);
             if !is_pure_group_block(&block) {
-                let sym = next_decl_sym(&lines, end + 1);
-                if !is_c_conditional_directive(sym) {
-                    let (name, kind) = detect_c_symbol(sym);
-                    let scope = current_cpp_scope(&ns_stack, &class_stack);
-                    let mut item = build_item(
-                        block,
-                        qualify_name(&name, &scope),
-                        kind.clone(),
-                        file,
-                        i + 1,
-                        lang.clone(),
-                        sym.to_string(),
-                    );
-                    if matches!(kind, DocKind::Function | DocKind::Variable) {
-                        item.meta.parent = class_stack
-                            .last()
-                            .map(|(_, p)| simple_scope_name(p).to_string());
-                    }
+                if let Some(mut item) = build_file_doc_item(&block, file, i + 1, lang.clone()) {
                     item.meta.group =
                         ingroup_from_tags(&item).or_else(|| group_stack.last().cloned());
                     if item_has_content(&item) {
                         items.push(item);
+                    }
+                } else {
+                    let sym = c_decl_sym(&lines, end + 1);
+                    if !is_c_conditional_directive(&sym) {
+                        let (name, kind) = detect_c_symbol(&sym);
+                        let scope = current_cpp_scope(&ns_stack, &class_stack);
+                        let mut item = build_item(
+                            block,
+                            qualify_name(&name, &scope),
+                            kind.clone(),
+                            file,
+                            i + 1,
+                            lang.clone(),
+                            sym,
+                        );
+                        if matches!(kind, DocKind::Function | DocKind::Variable) {
+                            item.meta.parent = class_stack
+                                .last()
+                                .map(|(_, p)| simple_scope_name(p).to_string());
+                        }
+                        item.meta.group =
+                            ingroup_from_tags(&item).or_else(|| group_stack.last().cloned());
+                        if item_has_content(&item) {
+                            items.push(item);
+                        }
                     }
                 }
             }
@@ -83,28 +91,36 @@ pub(super) fn extract_c_style(src: &str, file: &Path, lang: &DocLanguage) -> Vec
             let (block, end) = collect_line_block(&lines, i, "///");
             apply_group_directives(&block, &mut group_stack, &mut pending_group);
             if !is_pure_group_block(&block) {
-                let sym = next_decl_sym(&lines, end + 1);
-                if !is_c_conditional_directive(sym) {
-                    let (name, kind) = detect_c_symbol(sym);
-                    let scope = current_cpp_scope(&ns_stack, &class_stack);
-                    let mut item = build_item(
-                        block,
-                        qualify_name(&name, &scope),
-                        kind.clone(),
-                        file,
-                        i + 1,
-                        lang.clone(),
-                        sym.to_string(),
-                    );
-                    if matches!(kind, DocKind::Function | DocKind::Variable) {
-                        item.meta.parent = class_stack
-                            .last()
-                            .map(|(_, p)| simple_scope_name(p).to_string());
-                    }
+                if let Some(mut item) = build_file_doc_item(&block, file, i + 1, lang.clone()) {
                     item.meta.group =
                         ingroup_from_tags(&item).or_else(|| group_stack.last().cloned());
                     if item_has_content(&item) {
                         items.push(item);
+                    }
+                } else {
+                    let sym = c_decl_sym(&lines, end + 1);
+                    if !is_c_conditional_directive(&sym) {
+                        let (name, kind) = detect_c_symbol(&sym);
+                        let scope = current_cpp_scope(&ns_stack, &class_stack);
+                        let mut item = build_item(
+                            block,
+                            qualify_name(&name, &scope),
+                            kind.clone(),
+                            file,
+                            i + 1,
+                            lang.clone(),
+                            sym,
+                        );
+                        if matches!(kind, DocKind::Function | DocKind::Variable) {
+                            item.meta.parent = class_stack
+                                .last()
+                                .map(|(_, p)| simple_scope_name(p).to_string());
+                        }
+                        item.meta.group =
+                            ingroup_from_tags(&item).or_else(|| group_stack.last().cloned());
+                        if item_has_content(&item) {
+                            items.push(item);
+                        }
                     }
                 }
             }
@@ -123,6 +139,7 @@ pub(super) fn extract_c_style(src: &str, file: &Path, lang: &DocLanguage) -> Vec
                             Some((_, p)) => format!("{p}::{name}"),
                             None => name,
                         };
+                        push_namespace_source_item(&mut items, &path, file, i + 1, lang.clone(), t);
                         if t.contains('{') {
                             let opens = t.chars().filter(|&c| c == '{').count();
                             let closes = t.chars().filter(|&c| c == '}').count();
@@ -236,6 +253,13 @@ pub(crate) fn detect_c_symbol(line: &str) -> (String, DocKind) {
         }
         return (String::new(), DocKind::Typedef);
     }
+    if let Some(rest) = t.strip_prefix("using ") {
+        let candidate = first_ident(rest);
+        if !candidate.is_empty() {
+            return (candidate, DocKind::Typedef);
+        }
+        return (String::new(), DocKind::Typedef);
+    }
     if t.starts_with("template") {
         return (String::new(), DocKind::Unknown);
     }
@@ -243,6 +267,158 @@ pub(crate) fn detect_c_symbol(line: &str) -> (String, DocKind) {
         return (name, DocKind::Function);
     }
     (String::new(), DocKind::Unknown)
+}
+
+fn build_file_doc_item(
+    block: &[String],
+    file: &Path,
+    line: usize,
+    lang: DocLanguage,
+) -> Option<DocItem> {
+    if !block.iter().any(|line| is_file_directive(line)) {
+        return None;
+    }
+    Some(build_item(
+        block.to_vec(),
+        String::new(),
+        DocKind::Module,
+        file,
+        line,
+        lang,
+        String::new(),
+    ))
+}
+
+fn push_namespace_source_item(
+    items: &mut Vec<DocItem>,
+    name: &str,
+    file: &Path,
+    line: usize,
+    lang: DocLanguage,
+    signature: &str,
+) {
+    if items
+        .iter()
+        .any(|item| item.kind == DocKind::Module && item.name == name && item.file == file)
+    {
+        return;
+    }
+    items.push(build_item(
+        Vec::new(),
+        name.to_string(),
+        DocKind::Module,
+        file,
+        line,
+        lang,
+        signature.to_string(),
+    ));
+}
+
+fn is_file_directive(line: &str) -> bool {
+    let t = line.trim_start();
+    t == "@file"
+        || t == "\\file"
+        || t.starts_with("@file ")
+        || t.starts_with("\\file ")
+        || t.starts_with("@file\t")
+        || t.starts_with("\\file\t")
+}
+
+fn c_decl_sym(lines: &[&str], from: usize) -> String {
+    let first = next_decl_sym(lines, from);
+    let mut out = first.to_string();
+    let typedef_decl = is_typedef_decl(first);
+    let aggregate_typedef = is_multiline_aggregate_typedef(first);
+    let mut paren_depth = paren_delta(first);
+    let mut brace_depth = signed_brace_delta(first);
+    if c_decl_complete(
+        first,
+        paren_depth,
+        brace_depth,
+        typedef_decl,
+        aggregate_typedef,
+    ) {
+        return out;
+    }
+
+    let mut i = first_decl_index(lines, from).map_or(from, |idx| idx + 1);
+    while let Some(line) = lines.get(i) {
+        let t = line.trim();
+        if t.is_empty() {
+            i += 1;
+            continue;
+        }
+        out.push('\n');
+        out.push_str(t);
+        paren_depth += paren_delta(t);
+        brace_depth += signed_brace_delta(t);
+        if c_decl_complete(t, paren_depth, brace_depth, typedef_decl, aggregate_typedef) {
+            break;
+        }
+        i += 1;
+    }
+    out
+}
+
+fn c_decl_complete(
+    line: &str,
+    paren_depth: isize,
+    brace_depth: isize,
+    typedef_decl: bool,
+    aggregate_typedef: bool,
+) -> bool {
+    let t = line.trim_end();
+    if typedef_decl {
+        return paren_depth <= 0 && brace_depth <= 0 && t.ends_with(';');
+    }
+    if aggregate_typedef {
+        return brace_depth <= 0 && t.ends_with(';');
+    }
+    paren_depth <= 0 && (t.ends_with(';') || t.contains('{'))
+}
+
+fn is_typedef_decl(line: &str) -> bool {
+    strip_c_qualifiers(line.trim_start()).starts_with("typedef ")
+}
+
+fn first_decl_index(lines: &[&str], from: usize) -> Option<usize> {
+    let mut i = from;
+    loop {
+        let t = lines.get(i)?.trim();
+        if t.is_empty() || t.starts_with("template") {
+            i += 1;
+            continue;
+        }
+        return Some(i);
+    }
+}
+
+fn is_multiline_aggregate_typedef(line: &str) -> bool {
+    let t = strip_c_qualifiers(line.trim_start());
+    t.starts_with("typedef ")
+        && ["struct", "union", "enum"]
+            .iter()
+            .any(|kw| t.contains(&format!(" {kw}")) || t.contains(&format!(" {kw} ")))
+        && t.contains('{')
+        && brace_delta(t) > 0
+}
+
+fn brace_delta(line: &str) -> usize {
+    let opens = line.chars().filter(|&c| c == '{').count();
+    let closes = line.chars().filter(|&c| c == '}').count();
+    opens.saturating_sub(closes)
+}
+
+fn signed_brace_delta(line: &str) -> isize {
+    let opens = line.chars().filter(|&c| c == '{').count() as isize;
+    let closes = line.chars().filter(|&c| c == '}').count() as isize;
+    opens - closes
+}
+
+fn paren_delta(line: &str) -> isize {
+    let opens = line.chars().filter(|&c| c == '(').count() as isize;
+    let closes = line.chars().filter(|&c| c == ')').count() as isize;
+    opens - closes
 }
 
 fn qualify_name(name: &str, ns: &str) -> String {

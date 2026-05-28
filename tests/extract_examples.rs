@@ -896,6 +896,29 @@ fn doc_example_stats_finds_class() {
 }
 
 #[test]
+fn doc_example_stats_finds_header_file_doc() {
+    let set = extract_dir(&doc_example("libs/stats/src"));
+    let header_doc = set
+        .items
+        .iter()
+        .find(|item| {
+            item.kind == DocKind::Module
+                && item.name.is_empty()
+                && item.file.file_name().and_then(|name| name.to_str()) == Some("stats.h")
+        })
+        .expect("stats.h @file documentation should be extracted");
+
+    assert_eq!(
+        header_doc.brief,
+        "Descriptive statistics — C++17 public API."
+    );
+    assert!(header_doc
+        .body
+        .contains("All symbols live in the `stats` namespace"));
+    assert!(!header_doc.brief.contains("OrderStatistics"));
+}
+
+#[test]
 fn doc_example_stats_class_members_are_nested() {
     let set = extract_dir(&doc_example("libs/stats/src"));
     for name in &[
@@ -940,6 +963,57 @@ fn doc_example_mathlib_finds_functions() {
         let item = find_item(items, name);
         assert!(!item.brief.is_empty(), "{name} needs a brief");
     }
+}
+
+#[test]
+fn doc_example_mathlib_finds_vec2_type() {
+    let set = extract_dir(&doc_example("libs/mathlib/src"));
+    let vec2 = find_item(&set.items, "Vec2");
+    assert!(
+        matches!(vec2.kind, DocKind::Typedef | DocKind::Struct),
+        "Vec2 should be a type, got {:?}",
+        vec2.kind
+    );
+    assert!(
+        vec2.brief.contains("Fixed-size 2-D vector"),
+        "Vec2 should keep its own documentation"
+    );
+}
+
+#[test]
+fn doc_example_mathlib_finds_header_file_doc() {
+    let set = extract_dir(&doc_example("libs/mathlib/src"));
+    let header_doc = set
+        .items
+        .iter()
+        .find(|item| {
+            item.kind == DocKind::Module
+                && item.name.is_empty()
+                && item.file.file_name().and_then(|name| name.to_str()) == Some("mathlib.h")
+        })
+        .expect("mathlib.h @file documentation should be extracted");
+
+    assert_eq!(
+        header_doc.brief,
+        "Portable math utilities — Doxygen-style C header."
+    );
+    assert!(header_doc
+        .body
+        .contains("Demonstrates the three most common Doxygen block styles"));
+}
+
+#[test]
+fn doc_example_mathlib_integrate_keeps_markdown_table_in_body() {
+    let set = extract_dir(&doc_example("libs/mathlib/src"));
+    let integrate = find_item(&set.items, "integrate");
+    assert_eq!(
+        integrate.brief,
+        "Adaptive Simpson's rule for $\\int_a^b f(x)\\,dx$."
+    );
+    assert!(integrate.body.contains("| Parameter | Meaning |"));
+    assert!(integrate
+        .body
+        .contains("| `eps` | Absolute error tolerance"));
 }
 
 // ── doc-example: linalg (Fortran) ────────────────────────────────────────────

@@ -154,6 +154,31 @@ pub fn all_symbols(dirs: &[&Path]) -> Vec<DocItem> {
 
 // ── Source extraction ─────────────────────────────────────────────────────────
 
+/// Return the 1-based `(start_line, end_line)` of `item`'s source block.
+///
+/// - `start_line` is `item.line` (the opening doc-comment line).
+/// - `end_line` is computed with the same brace-depth / `END`-keyword heuristic
+///   used by [`extract_source`], capped at `max_lines` past the start.
+///
+/// Returns `(item.line, item.line)` if the file cannot be read or `item.line`
+/// is past the end of the file.
+pub fn source_line_range(item: &DocItem, max_lines: usize) -> (usize, usize) {
+    let Ok(text) = std::fs::read_to_string(&item.file) else {
+        return (item.line, item.line);
+    };
+    let lines: Vec<&str> = text.lines().collect();
+    let start = item.line.saturating_sub(1);
+    if start >= lines.len() {
+        return (item.line, item.line);
+    }
+    let end_idx = match item.lang {
+        DocLanguage::Fortran => find_fortran_end(&lines, start, &item.name, max_lines),
+        DocLanguage::Ada => find_ada_end(&lines, start, &item.name, max_lines),
+        _ => find_brace_end(&lines, start, max_lines),
+    };
+    (item.line, end_idx + 1) // convert 0-based index to 1-based line
+}
+
 /// Extract the raw source text for `item` — doc comment + declaration + body.
 ///
 /// Uses brace-depth tracking for C-family, Rust, Java, and Go.

@@ -32,6 +32,19 @@ pub(crate) fn build_item(
                 });
             }
             cur_tag = Some(tag);
+        } else if cur_tag
+            .as_ref()
+            .map(|(kind, _, _)| *kind == TagKind::Brief && raw.trim().is_empty())
+            .unwrap_or(false)
+        {
+            if let Some((k, n, tl)) = cur_tag.take() {
+                tags.push(DocTag {
+                    kind: k,
+                    name: n,
+                    text: tl.join(" ").trim().to_string(),
+                });
+            }
+            prose.push(raw.clone());
         } else if let Some((_, _, ref mut tl)) = cur_tag {
             tl.push(raw.clone());
         } else {

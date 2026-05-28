@@ -7,7 +7,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap},
+    widgets::{Block, BorderType, Borders, List, ListItem, ListState, Paragraph, Wrap},
     Frame, Terminal,
 };
 
@@ -47,7 +47,7 @@ enum TreeRowKind {
     Item(usize),
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum FocusPane {
     Tree,
     Detail,
@@ -97,10 +97,27 @@ impl TreeNode {
             }
         }
     }
+
+    fn attach_source(&mut self, path: &[String], item_idx: usize) -> bool {
+        let Some((label, rest)) = path.split_first() else {
+            return false;
+        };
+        let Some(child) = self.children.get_mut(label) else {
+            return false;
+        };
+        if rest.is_empty() {
+            child.source_idx = Some(item_idx);
+            true
+        } else {
+            child.attach_source(rest, item_idx)
+        }
+    }
 }
 
 struct App {
     all: Vec<DocItem>,
+    visible: Vec<usize>,
+    external_selected_idx: Option<usize>,
 
     query: String,
     cursor: usize,
@@ -113,7 +130,9 @@ struct App {
 
     scroll: u16,
     show_source: bool,
-    source_cache: Option<(usize, String)>,
+    source_cache: Option<(String, String)>,
+    source_variant: usize,
+    source_variants_cache: Option<(usize, Vec<DocItem>)>,
     overloads_open: bool,
     focus: FocusPane,
 
@@ -124,13 +143,20 @@ struct App {
 }
 
 impl App {
-    fn new(items: Vec<DocItem>) -> Self {
-        let n = items.len();
+    fn new_with_hidden(mut visible_items: Vec<DocItem>, hidden_items: Vec<DocItem>) -> Self {
+        let visible_len = visible_items.len();
+        visible_items.extend(hidden_items);
+        Self::new_with_visible(visible_items, (0..visible_len).collect())
+    }
+
+    fn new_with_visible(items: Vec<DocItem>, visible: Vec<usize>) -> Self {
         let mut app = Self {
             all: items,
+            visible,
+            external_selected_idx: None,
             query: String::new(),
             cursor: 0,
-            matching: (0..n).collect(),
+            matching: Vec::new(),
             rows: Vec::new(),
             expanded: HashSet::new(),
             list_state: ListState::default(),
@@ -138,6 +164,8 @@ impl App {
             scroll: 0,
             show_source: false,
             source_cache: None,
+            source_variant: 0,
+            source_variants_cache: None,
             overloads_open: false,
             focus: FocusPane::Tree,
             list_area: Rect::default(),
@@ -145,6 +173,7 @@ impl App {
             detail_inner_area: Rect::default(),
             detail_links: Vec::new(),
         };
+        app.matching = app.visible.clone();
         app.sort_matching();
         app.rebuild_rows();
         if !app.rows.is_empty() {
@@ -156,9 +185,12 @@ impl App {
     fn refilter(&mut self) {
         let q = self.query.to_ascii_lowercase();
         if q.is_empty() {
-            self.matching = (0..self.all.len()).collect();
+            self.matching = self.visible.clone();
         } else {
-            self.matching = (0..self.all.len())
+            self.matching = self
+                .visible
+                .iter()
+                .copied()
                 .filter(|&i| {
                     let item = &self.all[i];
                     item.name.to_ascii_lowercase().contains(&q)
@@ -182,8 +214,9 @@ impl App {
         self.ensure_selection_visible();
         self.scroll = 0;
         self.show_source = false;
-        self.source_cache = None;
+        self.reset_source_state();
         self.overloads_open = false;
+        self.external_selected_idx = None;
     }
 
     fn sort_matching(&mut self) {
@@ -197,12 +230,21 @@ impl App {
     fn rebuild_rows(&mut self) {
         let mut root = TreeNode::default();
         for &idx in &self.matching {
+            if !is_index_item(&self.all[idx]) {
+                continue;
+            }
             root.insert(
                 &tree_path(&self.all[idx]),
                 idx,
                 is_group_doc_item(&self.all[idx]),
                 true,
             );
+        }
+        for &idx in &self.matching {
+            if is_index_item(&self.all[idx]) {
+                continue;
+            }
+            root.attach_source(&tree_path(&self.all[idx]), idx);
         }
 
         let mut rows = Vec::new();
@@ -214,6 +256,9 @@ impl App {
     }
 
     fn selected_item(&self) -> Option<&DocItem> {
+        if let Some(idx) = self.external_selected_idx {
+            return self.all.get(idx);
+        }
         let sel = self.list_state.selected()?;
         match self.rows.get(sel)?.kind {
             TreeRowKind::Item(idx) => self.all.get(idx),
@@ -222,6 +267,9 @@ impl App {
     }
 
     fn selected_idx(&self) -> Option<usize> {
+        if let Some(idx) = self.external_selected_idx {
+            return Some(idx);
+        }
         let sel = self.list_state.selected()?;
         match self.rows.get(sel)?.kind {
             TreeRowKind::Item(idx) => Some(idx),
@@ -230,6 +278,9 @@ impl App {
     }
 
     fn selected_source_idx(&self) -> Option<usize> {
+        if let Some(idx) = self.external_selected_idx {
+            return Some(idx);
+        }
         let sel = self.list_state.selected()?;
         match self.rows.get(sel)?.kind {
             TreeRowKind::Item(idx) => Some(idx),
@@ -241,14 +292,35 @@ impl App {
         }
     }
 
+    fn selected_source_item(&mut self) -> Option<DocItem> {
+        let idx = self.selected_source_idx()?;
+        let variants = self.source_variants(idx);
+        variants
+            .get(self.source_variant.min(variants.len().saturating_sub(1)))
+            .cloned()
+    }
+
+    fn source_variant_status(&mut self) -> Option<(&'static str, usize, usize)> {
+        let idx = self.selected_source_idx()?;
+        let variants = self.source_variants(idx);
+        let len = variants.len();
+        if len == 0 {
+            None
+        } else {
+            let pos = self.source_variant.min(len - 1);
+            Some((source_variant_label(&variants[pos]), pos + 1, len))
+        }
+    }
+
     fn select(&mut self, pos: usize) {
         if self.rows.is_empty() {
             return;
         }
         let pos = pos.min(self.rows.len() - 1);
         self.list_state.select(Some(pos));
+        self.external_selected_idx = None;
         self.ensure_selection_visible();
-        self.source_cache = None;
+        self.reset_source_state();
         self.overloads_open = false;
         self.scroll = if self.show_source {
             self.source_initial_scroll()
@@ -258,9 +330,18 @@ impl App {
     }
 
     fn select_item_idx(&mut self, idx: usize) {
+        if !self.visible.contains(&idx) {
+            self.external_selected_idx = Some(idx);
+            self.show_source = false;
+            self.reset_source_state();
+            self.overloads_open = false;
+            self.scroll = 0;
+            return;
+        }
+
         if !self.matching.contains(&idx) {
             self.query.clear();
-            self.matching = (0..self.all.len()).collect();
+            self.matching = self.visible.clone();
             self.sort_matching();
         }
 
@@ -293,11 +374,36 @@ impl App {
         };
     }
 
-    fn source_initial_scroll(&self) -> u16 {
-        let Some(item) = self.selected_source_idx().and_then(|idx| self.all.get(idx)) else {
+    fn focus_left(&mut self) {
+        self.focus = FocusPane::Tree;
+    }
+
+    fn focus_right(&mut self) {
+        self.focus = FocusPane::Detail;
+    }
+
+    fn next_focused_tab(&mut self) {
+        match self.focus {
+            FocusPane::Tree => {}
+            FocusPane::Detail => self.toggle_source(),
+        }
+    }
+
+    fn previous_focused_tab(&mut self) {
+        self.next_focused_tab();
+    }
+
+    fn reset_source_state(&mut self) {
+        self.source_cache = None;
+        self.source_variant = 0;
+        self.source_variants_cache = None;
+    }
+
+    fn source_initial_scroll(&mut self) -> u16 {
+        let Some(item) = self.selected_source_item() else {
             return 0;
         };
-        declaration_line_idx(item)
+        declaration_line_idx(&item)
             .saturating_sub(4)
             .min(u16::MAX as usize) as u16
     }
@@ -346,7 +452,7 @@ impl App {
         }
         self.clamp_list_scroll();
         self.ensure_selection_visible();
-        self.source_cache = None;
+        self.reset_source_state();
         self.scroll = if self.show_source {
             self.source_initial_scroll()
         } else {
@@ -406,7 +512,15 @@ impl App {
                 let amount = self.visible_tree_rows();
                 self.list_scroll = self.list_scroll.saturating_sub(amount);
             }
-            FocusPane::Detail => self.scroll = self.scroll.saturating_sub(5),
+            FocusPane::Detail => {
+                if self.overload_count() > 1 {
+                    self.previous_overload();
+                } else if self.show_source && self.source_variant_count() > 1 {
+                    self.previous_source_variant();
+                } else {
+                    self.scroll = self.scroll.saturating_sub(5);
+                }
+            }
         }
     }
 
@@ -416,7 +530,15 @@ impl App {
                 self.list_scroll = self.list_scroll.saturating_add(self.visible_tree_rows());
                 self.clamp_list_scroll();
             }
-            FocusPane::Detail => self.scroll = self.scroll.saturating_add(5),
+            FocusPane::Detail => {
+                if self.overload_count() > 1 {
+                    self.next_overload();
+                } else if self.show_source && self.source_variant_count() > 1 {
+                    self.next_source_variant();
+                } else {
+                    self.scroll = self.scroll.saturating_add(5);
+                }
+            }
         }
     }
 
@@ -447,15 +569,122 @@ impl App {
     }
 
     fn source_text(&mut self) -> &str {
-        let Some(idx) = self.selected_source_idx() else {
+        let Some(item) = self.selected_source_item() else {
             return "";
         };
-        if self.source_cache.as_ref().map(|(i, _)| *i) == Some(idx) {
+        let key = source_cache_key(&item);
+        if self.source_cache.as_ref().map(|(i, _)| i.as_str()) == Some(key.as_str()) {
             return &self.source_cache.as_ref().unwrap().1;
         }
-        let src = std::fs::read_to_string(&self.all[idx].file).unwrap_or_default();
-        self.source_cache = Some((idx, src));
+        let src = extract_source_text(&item);
+        self.source_cache = Some((key, src));
         &self.source_cache.as_ref().unwrap().1
+    }
+
+    fn source_variant_count(&mut self) -> usize {
+        let Some(idx) = self.selected_source_idx() else {
+            return 0;
+        };
+        self.source_variants(idx).len()
+    }
+
+    fn overload_count(&self) -> usize {
+        self.selected_idx()
+            .map(|idx| overload_indices(&self.all, idx).len())
+            .unwrap_or(0)
+    }
+
+    fn previous_overload(&mut self) -> bool {
+        let Some(idx) = self.selected_idx() else {
+            return false;
+        };
+        let overloads = overload_indices(&self.all, idx);
+        if overloads.len() <= 1 {
+            return false;
+        }
+        let pos = overloads
+            .iter()
+            .position(|&overload| overload == idx)
+            .unwrap_or(0);
+        let target = overloads
+            .get(pos.checked_sub(1).unwrap_or(overloads.len() - 1))
+            .copied()
+            .unwrap_or(idx);
+        let keep_source = self.show_source;
+        self.select_item_idx(target);
+        if keep_source {
+            self.show_source = true;
+            self.scroll = self.source_initial_scroll();
+        }
+        true
+    }
+
+    fn next_overload(&mut self) -> bool {
+        let Some(idx) = self.selected_idx() else {
+            return false;
+        };
+        let overloads = overload_indices(&self.all, idx);
+        if overloads.len() <= 1 {
+            return false;
+        }
+        let pos = overloads
+            .iter()
+            .position(|&overload| overload == idx)
+            .unwrap_or(0);
+        let target = overloads
+            .get((pos + 1) % overloads.len())
+            .copied()
+            .unwrap_or(idx);
+        let keep_source = self.show_source;
+        self.select_item_idx(target);
+        if keep_source {
+            self.show_source = true;
+            self.scroll = self.source_initial_scroll();
+        }
+        true
+    }
+
+    fn previous_source_variant(&mut self) {
+        let count = self.source_variant_count();
+        if count <= 1 {
+            return;
+        }
+        self.source_variant = if self.source_variant == 0 {
+            count - 1
+        } else {
+            self.source_variant - 1
+        };
+        self.source_cache = None;
+        self.scroll = self.source_initial_scroll();
+    }
+
+    fn next_source_variant(&mut self) {
+        let count = self.source_variant_count();
+        if count <= 1 {
+            return;
+        }
+        self.source_variant = (self.source_variant + 1) % count;
+        self.source_cache = None;
+        self.scroll = self.source_initial_scroll();
+    }
+
+    fn source_variants(&mut self, idx: usize) -> Vec<DocItem> {
+        if self
+            .source_variants_cache
+            .as_ref()
+            .map(|(cached_idx, _)| *cached_idx)
+            == Some(idx)
+        {
+            return self.source_variants_cache.as_ref().unwrap().1.clone();
+        }
+        let variants = self
+            .all
+            .get(idx)
+            .map(source_variants_for_item)
+            .unwrap_or_default();
+        self.source_variant = self.source_variant.min(variants.len().saturating_sub(1));
+        self.source_variants_cache = Some((idx, variants.clone()));
+        variants
     }
 }
 
@@ -467,14 +696,25 @@ pub fn run_doc_browser(dirs: &[&Path]) -> anyhow::Result<()> {
     for dir in &scan_dirs {
         all_items.extend(crate::extract::extract_dir(dir).items);
     }
+    run_doc_browser_with_items(all_items)
+}
 
+pub fn run_doc_browser_with_items(all_items: Vec<DocItem>) -> anyhow::Result<()> {
+    run_doc_browser_with_hidden(all_items, Vec::new())
+}
+
+pub fn run_doc_browser_with_hidden(
+    visible_items: Vec<DocItem>,
+    hidden_items: Vec<DocItem>,
+) -> anyhow::Result<()> {
     // Dedup across multiple scan dirs: same symbol from a parent dir and a
     // subdirectory that was also added (e.g. via project manifest path-deps).
     // Key on (name, file, line); keep whichever copy has more tags/content.
-    let all_items = dedup_items(all_items);
+    let visible_items = dedup_items(visible_items);
+    let hidden_items = dedup_items(hidden_items);
 
     let mut terminal = enter_tui()?;
-    let result = run_loop(&mut terminal, all_items);
+    let result = run_loop(&mut terminal, visible_items, hidden_items);
     leave_tui(&mut terminal)?;
 
     result
@@ -507,9 +747,10 @@ fn dedup_items(items: Vec<crate::extract::DocItem>) -> Vec<crate::extract::DocIt
 
 fn run_loop(
     terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
-    items: Vec<DocItem>,
+    visible_items: Vec<DocItem>,
+    hidden_items: Vec<DocItem>,
 ) -> anyhow::Result<()> {
-    let mut app = App::new(items);
+    let mut app = App::new_with_hidden(visible_items, hidden_items);
 
     loop {
         terminal.draw(|f| render(f, &mut app))?;
@@ -528,7 +769,10 @@ fn run_loop(
                     (KeyCode::Enter, _) | (KeyCode::Char(' '), KeyModifiers::NONE) => {
                         app.toggle_selected()
                     }
-                    (KeyCode::Tab, _) => app.toggle_source(),
+                    (KeyCode::Left, _) => app.focus_left(),
+                    (KeyCode::Right, _) => app.focus_right(),
+                    (KeyCode::Tab, _) => app.next_focused_tab(),
+                    (KeyCode::BackTab, _) => app.previous_focused_tab(),
                     (KeyCode::Char('o'), KeyModifiers::NONE) => app.toggle_overloads(),
                     (KeyCode::PageUp, _) => app.page_focused_up(),
                     (KeyCode::PageDown, _) => app.page_focused_down(),
@@ -707,7 +951,17 @@ fn render_list(f: &mut Frame, app: &mut App, area: Rect) {
         })
         .collect();
 
-    let title = format!(" {} / {} ", app.matching.len(), app.all.len());
+    let hidden = app.all.len().saturating_sub(app.visible.len());
+    let title = if hidden == 0 {
+        format!(" {} / {} ", app.matching.len(), app.visible.len())
+    } else {
+        format!(
+            " {} / {}  +{} refs ",
+            app.matching.len(),
+            app.visible.len(),
+            hidden
+        )
+    };
     let selected = app
         .list_state
         .selected()
@@ -720,6 +974,7 @@ fn render_list(f: &mut Frame, app: &mut App, area: Rect) {
         .block(
             Block::default()
                 .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
                 .border_style(panel_border_style(app.focus == FocusPane::Tree))
                 .title(Span::styled(title, Style::default().fg(COLOR_TITLE))),
         )
@@ -733,13 +988,25 @@ fn render_detail(f: &mut Frame, app: &mut App, area: Rect) {
     app.detail_area = area;
     let show_source = app.show_source;
     let title = if show_source {
-        " Source [Tab: doc] "
+        let source_file = app
+            .selected_source_item()
+            .map(|item| source_file_title(&item))
+            .unwrap_or_else(|| "source".to_string());
+        if let Some((label, pos, total)) = app
+            .source_variant_status()
+            .filter(|(_, _, total)| *total > 1)
+        {
+            format!(" Source: {source_file} [Tab: doc] [{label} {pos}/{total}] [PgUp/PgDn] ")
+        } else {
+            format!(" Source: {source_file} [Tab: doc] ")
+        }
     } else {
-        " Documentation [Tab: source] "
+        " Documentation [Tab: source] ".to_string()
     };
 
     let block = Block::default()
         .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
         .border_style(panel_border_style(app.focus == FocusPane::Detail))
         .title(Span::styled(title, Style::default().fg(COLOR_TITLE)));
 
@@ -755,9 +1022,9 @@ fn render_detail(f: &mut Frame, app: &mut App, area: Rect) {
     }
 
     let selected_idx = app.selected_idx();
-    let selected_source_idx = app.selected_source_idx();
 
     if show_source {
+        let selected_source_item = app.selected_source_item();
         let text = app.source_text().to_owned();
         if text.is_empty() {
             let p =
@@ -765,9 +1032,7 @@ fn render_detail(f: &mut Frame, app: &mut App, area: Rect) {
             f.render_widget(p, inner);
         } else {
             let lang = selected_language(app);
-            let decl_line = selected_source_idx
-                .and_then(|idx| app.all.get(idx))
-                .map(declaration_line_idx);
+            let decl_line = selected_source_item.as_ref().map(declaration_line_idx);
             let lines: Vec<Line> = text
                 .lines()
                 .enumerate()
@@ -790,25 +1055,7 @@ fn render_detail(f: &mut Frame, app: &mut App, area: Rect) {
 
     let mut lines: Vec<Line<'static>> = Vec::new();
 
-    // Header: kind chip + name + language
-    lines.push(Line::from(vec![
-        Span::styled(
-            format!("[{}] ", tui_kind_label(&item.kind)),
-            Style::default()
-                .fg(kind_color(&item.kind))
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(
-            item.name.clone(),
-            Style::default()
-                .fg(kind_color(&item.kind))
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(
-            format!("  {}", item.lang.label()),
-            Style::default().fg(Color::Yellow),
-        ),
-    ]));
+    push_item_header_lines(&mut lines, &item, width);
 
     // File + line
     lines.push(Line::styled(
@@ -827,53 +1074,56 @@ fn render_detail(f: &mut Frame, app: &mut App, area: Rect) {
         );
     }
 
+    let has_docs = !item.brief.is_empty() || !item.body.is_empty() || !item.tags.is_empty();
+
     // Brief
     if !item.brief.is_empty() {
-        for l in word_wrap(&doc_text(&item.brief), width) {
-            let line_no = lines.len();
-            lines.push(linkable_text_line(
-                &l,
-                &app.all,
-                selected_idx,
-                &item.lang,
-                line_no,
-                &mut app.detail_links,
-                Style::default().fg(Color::White),
-            ));
-        }
+        push_doc_text_lines(
+            &mut lines,
+            &doc_text(&item.brief),
+            width,
+            &app.all,
+            selected_idx,
+            &item.lang,
+            &mut app.detail_links,
+            Style::default().fg(COLOR_CONTENT),
+        );
+        lines.push(Line::raw(""));
+    }
+
+    if !has_docs {
+        lines.push(Line::styled(
+            "No documentation.",
+            Style::default().fg(COLOR_HINT),
+        ));
         lines.push(Line::raw(""));
     }
 
     // Signature
     if !item.signature.is_empty() {
-        for l in word_wrap(&item.display_signature(), width) {
-            let line_no = lines.len();
-            lines.push(highlight_code_line_with_links(
-                &l,
-                &item.lang,
-                &app.all,
-                selected_idx,
-                line_no,
-                &mut app.detail_links,
-            ));
-        }
+        push_signature_lines(
+            &mut lines,
+            &item,
+            width,
+            &app.all,
+            selected_idx,
+            &mut app.detail_links,
+        );
         lines.push(Line::raw(""));
     }
 
     // Body (extended description)
     if !item.body.is_empty() {
-        for l in word_wrap(&doc_text(&item.body), width) {
-            let line_no = lines.len();
-            lines.push(linkable_text_line(
-                &l,
-                &app.all,
-                selected_idx,
-                &item.lang,
-                line_no,
-                &mut app.detail_links,
-                Style::default().fg(COLOR_CONTENT),
-            ));
-        }
+        push_doc_text_lines(
+            &mut lines,
+            &doc_text(&item.body),
+            width,
+            &app.all,
+            selected_idx,
+            &item.lang,
+            &mut app.detail_links,
+            Style::default().fg(COLOR_CONTENT),
+        );
         lines.push(Line::raw(""));
     }
 
@@ -997,7 +1247,7 @@ fn render_status(f: &mut Frame, app: &App, area: Rect) {
     } else {
         render_hint_bar(
             f,
-            " ↑↓/jk navigate   Enter/click open   o overloads   click refs/types jump   Tab source   PgUp/PgDn scroll   q quit",
+            " ←/→ focus pane   ↑↓/jk navigate   Enter/click open   Tab pane tab   o overloads   PgUp/PgDn scroll   q quit",
             area,
         );
     }
@@ -1017,6 +1267,93 @@ fn tui_kind_label(kind: &DocKind) -> &'static str {
     match kind {
         DocKind::Function => "func",
         _ => kind.label(),
+    }
+}
+
+fn push_item_header_lines(lines: &mut Vec<Line<'static>>, item: &DocItem, width: usize) {
+    let kind_style = Style::default()
+        .fg(kind_color(&item.kind))
+        .add_modifier(Modifier::BOLD);
+    let mut spans = vec![Span::styled(
+        format!("[{}] ", tui_kind_label(&item.kind)),
+        kind_style,
+    )];
+    spans.extend(qualified_name_spans(item));
+    spans.push(Span::styled(
+        format!("  {}", item.lang.label()),
+        Style::default().fg(Color::Yellow),
+    ));
+    push_wrapped_spans(lines, spans, width.max(1));
+}
+
+fn qualified_name_spans(item: &DocItem) -> Vec<Span<'static>> {
+    let name_style = Style::default()
+        .fg(kind_color(&item.kind))
+        .add_modifier(Modifier::BOLD);
+    let scope_style = Style::default().fg(COLOR_TITLE);
+    let sep_style = Style::default().fg(Color::DarkGray);
+
+    let mut spans = Vec::new();
+    let parts: Vec<&str> = if item.name.contains("::") {
+        item.name.split("::").collect()
+    } else if item.name.contains('.') {
+        item.name.split('.').collect()
+    } else {
+        Vec::new()
+    };
+    if parts.is_empty() {
+        spans.push(Span::styled(item.name.clone(), name_style));
+        return spans;
+    }
+
+    let sep = if item.name.contains("::") { "::" } else { "." };
+    for (idx, part) in parts.iter().enumerate() {
+        if idx > 0 {
+            spans.push(Span::styled(sep.to_string(), sep_style));
+        }
+        let style = if idx + 1 == parts.len() {
+            name_style
+        } else {
+            scope_style
+        };
+        spans.push(Span::styled((*part).to_string(), style));
+    }
+    spans
+}
+
+fn push_wrapped_spans(lines: &mut Vec<Line<'static>>, spans: Vec<Span<'static>>, width: usize) {
+    let mut current = Vec::new();
+    let mut col = 0usize;
+    for span in spans {
+        let mut text = span.content.as_ref();
+        while !text.is_empty() {
+            let remaining = width.saturating_sub(col).max(1);
+            let take = text
+                .char_indices()
+                .map(|(idx, _)| idx)
+                .nth(remaining)
+                .unwrap_or(text.len());
+            if col > 0 && text.chars().count() > remaining {
+                lines.push(Line::from(current));
+                current = Vec::new();
+                col = 0;
+                continue;
+            }
+            let (chunk, rest) = text.split_at(take);
+            if !chunk.is_empty() {
+                current.push(Span::styled(chunk.to_string(), span.style));
+                col += chunk.chars().count();
+            }
+            text = rest;
+            if !text.is_empty() {
+                lines.push(Line::from(current));
+                current = Vec::new();
+                col = 0;
+            }
+        }
+    }
+    if !current.is_empty() {
+        lines.push(Line::from(current));
     }
 }
 
@@ -1307,6 +1644,29 @@ fn member_display_text(member: &DocItem) -> String {
     }
 }
 
+fn push_signature_lines(
+    lines: &mut Vec<Line<'static>>,
+    item: &DocItem,
+    width: usize,
+    all: &[DocItem],
+    selected_idx: Option<usize>,
+    links: &mut Vec<DetailLink>,
+) {
+    for raw_line in item.display_signature().lines() {
+        for wrapped in word_wrap(raw_line, width) {
+            let line_no = lines.len();
+            lines.push(highlight_code_line_with_links(
+                &wrapped,
+                &item.lang,
+                all,
+                selected_idx,
+                line_no,
+                links,
+            ));
+        }
+    }
+}
+
 fn type_members<'a>(all: &'a [DocItem], type_item: &DocItem) -> Vec<&'a DocItem> {
     let type_name = type_item.name.as_str();
     let simple = simple_name(type_name);
@@ -1323,6 +1683,16 @@ fn type_members<'a>(all: &'a [DocItem], type_item: &DocItem) -> Vec<&'a DocItem>
         kind_order(&a.kind)
             .cmp(&kind_order(&b.kind))
             .then(a.name.cmp(&b.name))
+            .then(normalized_signature(a).cmp(&normalized_signature(b)))
+    });
+    let mut seen = HashSet::new();
+    members.retain(|member| {
+        seen.insert(format!(
+            "{:?}\0{}\0{}",
+            member.kind,
+            member.name,
+            normalized_signature(member)
+        ))
     });
     members
 }
@@ -1444,8 +1814,11 @@ fn overload_indices(all: &[DocItem], current_idx: usize) -> Vec<usize> {
     if !matches!(current.kind, DocKind::Function | DocKind::Subroutine) {
         return Vec::new();
     }
+    if matches!(current.lang, DocLanguage::C) {
+        return vec![current_idx];
+    }
     let key = overload_key(current);
-    let mut indices: Vec<usize> = all
+    let mut candidates: Vec<usize> = all
         .iter()
         .enumerate()
         .filter(|(_, item)| {
@@ -1454,8 +1827,29 @@ fn overload_indices(all: &[DocItem], current_idx: usize) -> Vec<usize> {
         })
         .map(|(idx, _)| idx)
         .collect();
-    indices.sort_by(|&a, &b| all[a].signature.cmp(&all[b].signature).then(a.cmp(&b)));
+    candidates.sort_by(|&a, &b| {
+        normalized_signature(&all[a])
+            .cmp(&normalized_signature(&all[b]))
+            .then(a.cmp(&b))
+    });
+
+    let mut seen = HashSet::new();
+    let mut indices = Vec::new();
+    for idx in candidates {
+        if seen.insert(normalized_signature(&all[idx])) {
+            indices.push(idx);
+        }
+    }
     indices
+}
+
+fn normalized_signature(item: &DocItem) -> String {
+    item.display_signature()
+        .trim()
+        .trim_end_matches(';')
+        .trim_end_matches('{')
+        .trim()
+        .to_string()
 }
 
 fn overload_key(item: &DocItem) -> (DocLanguage, String, String) {
@@ -1472,6 +1866,176 @@ fn overload_key(item: &DocItem) -> (DocLanguage, String, String) {
             .unwrap_or_default(),
         simple_name(&item.name).to_string(),
     )
+}
+
+fn push_doc_text_lines(
+    lines: &mut Vec<Line<'static>>,
+    text: &str,
+    width: usize,
+    all: &[DocItem],
+    selected_idx: Option<usize>,
+    lang: &DocLanguage,
+    links: &mut Vec<DetailLink>,
+    base_style: Style,
+) {
+    let raw_lines: Vec<&str> = text.lines().collect();
+    let mut i = 0usize;
+    while i < raw_lines.len() {
+        if let Some((table, consumed)) = parse_markdown_table(&raw_lines, i) {
+            push_markdown_table(lines, &table, width);
+            i += consumed;
+            continue;
+        }
+
+        for wrapped in word_wrap(raw_lines[i], width) {
+            let line_no = lines.len();
+            lines.push(linkable_text_line(
+                &wrapped,
+                all,
+                selected_idx,
+                lang,
+                line_no,
+                links,
+                base_style,
+            ));
+        }
+        i += 1;
+    }
+}
+
+#[derive(Debug, Clone)]
+struct MarkdownTable {
+    headers: Vec<String>,
+    rows: Vec<Vec<String>>,
+}
+
+fn parse_markdown_table(lines: &[&str], start: usize) -> Option<(MarkdownTable, usize)> {
+    let header = split_markdown_table_row(*lines.get(start)?)?;
+    let separator = split_markdown_table_row(*lines.get(start + 1)?)?;
+    if header.is_empty()
+        || !separator
+            .iter()
+            .all(|cell| is_markdown_separator_cell(cell))
+    {
+        return None;
+    }
+
+    let mut rows = Vec::new();
+    let mut i = start + 2;
+    while let Some(line) = lines.get(i) {
+        let Some(cells) = split_markdown_table_row(line) else {
+            break;
+        };
+        if cells.is_empty() {
+            break;
+        }
+        rows.push(cells);
+        i += 1;
+    }
+
+    Some((
+        MarkdownTable {
+            headers: header,
+            rows,
+        },
+        i - start,
+    ))
+}
+
+fn split_markdown_table_row(line: &str) -> Option<Vec<String>> {
+    let trimmed = line.trim();
+    if !trimmed.starts_with('|') || !trimmed.ends_with('|') || trimmed.matches('|').count() < 2 {
+        return None;
+    }
+    Some(
+        trimmed
+            .trim_matches('|')
+            .split('|')
+            .map(|cell| clean_markdown_table_cell(cell.trim()))
+            .collect(),
+    )
+}
+
+fn is_markdown_separator_cell(cell: &str) -> bool {
+    let trimmed = cell.trim_matches(':').trim();
+    !trimmed.is_empty() && trimmed.chars().all(|ch| ch == '-')
+}
+
+fn clean_markdown_table_cell(cell: &str) -> String {
+    cell.replace('`', "")
+        .replace("**", "")
+        .replace('*', "")
+        .trim()
+        .to_string()
+}
+
+fn push_markdown_table(lines: &mut Vec<Line<'static>>, table: &MarkdownTable, width: usize) {
+    if table.headers.len() != 2 {
+        push_markdown_table_fallback(lines, table, width);
+        return;
+    }
+
+    let name_width = table
+        .rows
+        .iter()
+        .filter_map(|row| row.first())
+        .map(|cell| cell.chars().count())
+        .chain(table.headers.first().map(|cell| cell.chars().count()))
+        .max()
+        .unwrap_or(8)
+        .clamp(4, 20);
+    let available_desc = width.saturating_sub(name_width + 8).max(16);
+    let content_desc = table
+        .rows
+        .iter()
+        .filter_map(|row| row.get(1))
+        .map(|cell| cell.chars().count())
+        .chain(table.headers.get(1).map(|cell| cell.chars().count()))
+        .max()
+        .unwrap_or(16);
+    let desc_width = content_desc.clamp(16, available_desc.min(56));
+
+    lines.push(table_rule(name_width, desc_width, "┌", "┬", "┐"));
+    lines.push(table_row(
+        table.headers.first().map(String::as_str).unwrap_or(""),
+        table.headers.get(1).map(String::as_str).unwrap_or(""),
+        name_width,
+        desc_width,
+        true,
+        true,
+    ));
+    lines.push(table_rule(name_width, desc_width, "├", "┼", "┤"));
+    for row in &table.rows {
+        push_wrapped_table_row(
+            lines,
+            row.first().map(String::as_str).unwrap_or(""),
+            row.get(1).map(String::as_str).unwrap_or(""),
+            name_width,
+            desc_width,
+        );
+    }
+    lines.push(table_rule(name_width, desc_width, "└", "┴", "┘"));
+}
+
+fn push_markdown_table_fallback(
+    lines: &mut Vec<Line<'static>>,
+    table: &MarkdownTable,
+    width: usize,
+) {
+    let header = table.headers.join("  ");
+    for wrapped in word_wrap(&header, width) {
+        lines.push(Line::styled(
+            wrapped,
+            Style::default()
+                .fg(COLOR_SECTION)
+                .add_modifier(Modifier::BOLD),
+        ));
+    }
+    for row in &table.rows {
+        for wrapped in word_wrap(&row.join("  "), width) {
+            lines.push(Line::styled(wrapped, Style::default().fg(COLOR_CONTENT)));
+        }
+    }
 }
 
 fn push_param_return_table(lines: &mut Vec<Line<'static>>, item: &DocItem, width: usize) {
@@ -2014,7 +2578,12 @@ fn push_linkable_text_token(
     if token.is_empty() {
         return;
     }
-    let target = find_doc_target(all, clean_reference_name(token), current_idx, lang);
+    let clean = clean_reference_name(token);
+    let target = if is_prose_reference_candidate(clean) {
+        find_doc_target(all, clean, current_idx, lang)
+    } else {
+        None
+    };
     let mut style = base_style;
     if let Some(target_idx) = target {
         style = linked_symbol_style(&all[target_idx].kind);
@@ -2044,7 +2613,11 @@ fn push_reference_token(
         return;
     }
     let trimmed = token.trim_matches(|ch: char| !ch.is_alphanumeric() && ch != '_' && ch != ':');
-    let target = find_doc_target(all, trimmed, current_idx, lang);
+    let target = if is_prose_reference_candidate(trimmed) {
+        find_doc_target(all, trimmed, current_idx, lang)
+    } else {
+        None
+    };
     let style = target
         .map(|target_idx| linked_symbol_style(&all[target_idx].kind))
         .unwrap_or_else(|| Style::default().fg(Color::Cyan));
@@ -2071,8 +2644,10 @@ fn find_doc_target(
     }
     all.iter()
         .enumerate()
-        .filter(|(idx, item)| {
-            Some(*idx) != current_idx && &item.lang == lang && !is_class_or_constructor(item)
+        .filter(|(_, item)| {
+            &item.lang == lang
+                && !is_constructor(item)
+                && !is_current_symbol_reference(all, current_idx, item, needle)
         })
         .find(|(_, item)| item_matches_ref(item, needle))
         .map(|(idx, _)| idx)
@@ -2082,21 +2657,53 @@ fn item_matches_ref(item: &DocItem, needle: &str) -> bool {
     item.name == needle || simple_name(&item.name) == needle
 }
 
-/// Returns true for items that should never be used as inline reference link
-/// targets: class/struct/interface type definitions, and C++ constructors
-/// (identified by their simple name matching their parent scope name, e.g.
-/// `stats::OrderStatistics::OrderStatistics`).
-fn is_class_or_constructor(item: &DocItem) -> bool {
-    // Type definitions are structural — don't turn mentions of a class name
-    // into jump links in prose.
-    if matches!(
-        item.kind,
-        DocKind::Class | DocKind::Struct | DocKind::Interface
-    ) {
-        return true;
+fn is_current_symbol_reference(
+    all: &[DocItem],
+    current_idx: Option<usize>,
+    candidate: &DocItem,
+    needle: &str,
+) -> bool {
+    let Some(current) = current_idx.and_then(|idx| all.get(idx)) else {
+        return false;
+    };
+    if !item_matches_ref(candidate, needle) {
+        return false;
     }
-    // C/C++ constructors: Function whose unqualified name equals its parent
-    // scope's unqualified name (e.g. `Foo::Foo` or `ns::Foo::Foo`).
+    if matches!(current.kind, DocKind::Function | DocKind::Subroutine)
+        && matches!(candidate.kind, DocKind::Function | DocKind::Subroutine)
+    {
+        return overload_key(current) == overload_key(candidate);
+    }
+    current.kind == candidate.kind
+        && scoped_name_key(&current.name) == scoped_name_key(&candidate.name)
+}
+
+fn scoped_name_key(name: &str) -> (String, String) {
+    let scope = name
+        .rsplit_once("::")
+        .map(|(scope, _)| scope)
+        .or_else(|| name.rsplit_once('.').map(|(scope, _)| scope))
+        .unwrap_or("");
+    (scope.to_string(), simple_name(name).to_string())
+}
+
+fn is_prose_reference_candidate(name: &str) -> bool {
+    if name.is_empty() {
+        return false;
+    }
+    name.contains("::")
+        || name.contains('.')
+        || name.contains('_')
+        || name
+            .chars()
+            .next()
+            .map(|ch| ch.is_uppercase())
+            .unwrap_or(false)
+}
+
+/// Returns true for C/C++ constructors that should not be used as inline
+/// reference targets when a type with the same name is present.
+fn is_constructor(item: &DocItem) -> bool {
     if matches!(item.lang, DocLanguage::C | DocLanguage::Cpp) && item.kind == DocKind::Function {
         if let Some((parent, ctor)) = item.name.rsplit_once("::") {
             let parent_simple = simple_name(parent);
@@ -2113,6 +2720,9 @@ fn clean_reference_name(name: &str) -> &str {
 }
 
 fn declaration_line_idx(item: &DocItem) -> usize {
+    if matches!(item.kind, DocKind::Module) && item.name.is_empty() {
+        return item.line.saturating_sub(1);
+    }
     let Ok(text) = std::fs::read_to_string(&item.file) else {
         return item.line.saturating_sub(1);
     };
@@ -2160,6 +2770,130 @@ fn next_nonblank_line(lines: &[&str], mut idx: usize) -> Option<usize> {
         idx += 1;
     }
     None
+}
+
+fn source_cache_key(item: &DocItem) -> String {
+    item.file.display().to_string()
+}
+
+fn extract_source_text(item: &DocItem) -> String {
+    std::fs::read_to_string(&item.file).unwrap_or_default()
+}
+
+fn source_file_title(item: &DocItem) -> String {
+    item.file
+        .strip_prefix(std::env::current_dir().unwrap_or_default())
+        .unwrap_or(&item.file)
+        .display()
+        .to_string()
+}
+
+fn source_variants_for_item(item: &DocItem) -> Vec<DocItem> {
+    if !matches!(item.lang, DocLanguage::C | DocLanguage::Cpp)
+        || !matches!(item.kind, DocKind::Function | DocKind::Subroutine)
+    {
+        return vec![item.clone()];
+    }
+
+    let Some(root) = item.file.parent() else {
+        return vec![item.clone()];
+    };
+    let name = simple_name(&item.name);
+    let mut variants = Vec::new();
+    let mut seen = HashSet::new();
+
+    for entry in walkdir::WalkDir::new(root)
+        .follow_links(false)
+        .max_depth(3)
+        .into_iter()
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_type().is_file())
+    {
+        let path = entry.path();
+        if !is_c_family_source(path) {
+            continue;
+        }
+        let Ok(text) = std::fs::read_to_string(path) else {
+            continue;
+        };
+        for (line_idx, line) in text.lines().enumerate() {
+            let trimmed = line.trim_start();
+            if !is_function_source_candidate(trimmed, name) {
+                continue;
+            }
+            let key = (path.to_path_buf(), line_idx + 1);
+            if !seen.insert(key) {
+                continue;
+            }
+            let mut variant = item.clone();
+            variant.file = path.to_path_buf();
+            variant.line = line_idx + 1;
+            variant.signature = trimmed.to_string();
+            variants.push(variant);
+        }
+    }
+
+    if variants.is_empty() {
+        return vec![item.clone()];
+    }
+    variants.sort_by(|a, b| {
+        source_variant_rank(a)
+            .cmp(&source_variant_rank(b))
+            .then(a.file.cmp(&b.file))
+            .then(a.line.cmp(&b.line))
+    });
+    variants
+}
+
+fn source_variant_rank(item: &DocItem) -> u8 {
+    match item
+        .file
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or("")
+    {
+        "h" | "hh" | "hpp" | "hxx" | "cuh" => 0,
+        _ => 1,
+    }
+}
+
+fn source_variant_label(item: &DocItem) -> &'static str {
+    match item
+        .file
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or("")
+    {
+        "h" | "hh" | "hpp" | "hxx" | "cuh" => "prototype",
+        _ => "definition",
+    }
+}
+
+fn is_c_family_source(path: &Path) -> bool {
+    matches!(
+        path.extension().and_then(|ext| ext.to_str()).unwrap_or(""),
+        "c" | "h" | "cc" | "cpp" | "cxx" | "c++" | "hh" | "hpp" | "hxx" | "cu" | "cuh"
+    )
+}
+
+fn is_function_source_candidate(line: &str, name: &str) -> bool {
+    if line.is_empty()
+        || line.starts_with("//")
+        || line.starts_with("/*")
+        || line.starts_with('*')
+        || line.starts_with('#')
+    {
+        return false;
+    }
+    let Some(pos) = line.find(name) else {
+        return false;
+    };
+    let before = line[..pos].chars().last();
+    if before.is_some_and(|ch| ch.is_alphanumeric() || ch == '_') {
+        return false;
+    }
+    let after = &line[pos + name.len()..];
+    after.trim_start().starts_with('(')
 }
 
 fn punctuation_style(ch: char) -> Style {
@@ -2391,6 +3125,14 @@ fn is_group_doc_item(item: &DocItem) -> bool {
         )
 }
 
+fn is_index_item(item: &DocItem) -> bool {
+    has_doc_content(item) || !matches!(item.kind, DocKind::Module)
+}
+
+fn has_doc_content(item: &DocItem) -> bool {
+    !item.brief.is_empty() || !item.body.is_empty() || !item.tags.is_empty()
+}
+
 fn is_type_group_doc_item(item: &DocItem) -> bool {
     matches!(
         item.kind,
@@ -2558,7 +3300,11 @@ mod tests {
 
     use ratatui::style::{Color, Modifier, Style};
 
-    use super::{item_group_parts, linkable_text_line, TreeNode};
+    use super::{
+        find_doc_target, item_group_parts, linkable_text_line, overload_indices,
+        push_doc_text_lines, push_item_header_lines, push_signature_lines,
+        source_variants_for_item, type_members, App, FocusPane, TreeNode, TreeRowKind,
+    };
     use crate::extract::{DocItem, DocKind, DocLanguage, DocMeta};
 
     #[test]
@@ -2600,6 +3346,64 @@ mod tests {
         assert_eq!(file.source_idx, Some(7));
         assert_eq!(namespace.source_idx, Some(7));
         assert_eq!(class.source_idx, Some(7));
+    }
+
+    #[test]
+    fn source_only_namespace_does_not_create_index_node() {
+        let namespace = item("stats", DocKind::Module, DocLanguage::Cpp);
+        let app = App::new_with_visible(vec![namespace], vec![0]);
+
+        assert!(app.rows.is_empty());
+    }
+
+    #[test]
+    fn source_only_namespace_attaches_to_documented_children() {
+        let mut namespace = item("stats", DocKind::Module, DocLanguage::Cpp);
+        namespace.file = "stats.h".into();
+        let mut mean = item("stats::mean", DocKind::Function, DocLanguage::Cpp);
+        mean.file = "stats.h".into();
+        mean.brief = "Arithmetic mean.".into();
+        let mut app = App::new_with_visible(vec![namespace, mean], vec![0, 1]);
+        app.expanded.insert("C/C++".into());
+        app.expanded.insert("C/C++\u{1f}stats.h".into());
+        app.rebuild_rows();
+
+        let namespace = app
+            .rows
+            .iter()
+            .find(|row| row.label == "stats")
+            .expect("namespace group should exist");
+        assert!(!app.rows.iter().any(|row| match row.kind {
+            TreeRowKind::Item(idx) => idx == 0,
+            TreeRowKind::Group { item_idx, .. } => item_idx == Some(0),
+        }));
+        assert!(matches!(
+            namespace.kind,
+            TreeRowKind::Group {
+                source_idx: Some(0),
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn horizontal_keys_change_focus_and_tab_switches_detail_tabs() {
+        let mut item = item("stats::mean", DocKind::Function, DocLanguage::Cpp);
+        item.brief = "Arithmetic mean.".into();
+        let mut app = App::new_with_visible(vec![item], vec![0]);
+
+        app.focus_right();
+        assert_eq!(app.focus, FocusPane::Detail);
+        assert!(!app.show_source);
+        app.next_focused_tab();
+        assert!(app.show_source);
+        app.previous_focused_tab();
+        assert!(!app.show_source);
+
+        app.focus_left();
+        assert_eq!(app.focus, FocusPane::Tree);
+        app.next_focused_tab();
+        assert!(!app.show_source);
     }
 
     #[test]
@@ -2645,6 +3449,309 @@ mod tests {
                 && span.style.add_modifier.contains(Modifier::ITALIC)));
     }
 
+    #[test]
+    fn prose_links_can_target_type_definitions() {
+        let all = vec![item("std::vector", DocKind::Class, DocLanguage::Cpp)];
+        let mut links = Vec::new();
+        let line = linkable_text_line(
+            "returns std::vector values",
+            &all,
+            None,
+            &DocLanguage::Cpp,
+            0,
+            &mut links,
+            Style::default().fg(Color::White),
+        );
+        let text: String = line
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect();
+
+        assert_eq!(text, "returns std::vector values");
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].target_idx, 0);
+    }
+
+    #[test]
+    fn prose_does_not_link_current_function_family() {
+        let all = vec![
+            item("stats::mean", DocKind::Function, DocLanguage::Cpp),
+            item("stats::mean", DocKind::Function, DocLanguage::Cpp),
+            item("stats::variance", DocKind::Function, DocLanguage::Cpp),
+        ];
+        let mut links = Vec::new();
+        let line = linkable_text_line(
+            "stats::mean calls stats::variance",
+            &all,
+            Some(0),
+            &DocLanguage::Cpp,
+            0,
+            &mut links,
+            Style::default().fg(Color::White),
+        );
+        let text: String = line
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect();
+
+        assert_eq!(text, "stats::mean calls stats::variance");
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].target_idx, 2);
+    }
+
+    #[test]
+    fn prose_does_not_link_plain_lowercase_words() {
+        let all = vec![item("mean", DocKind::Function, DocLanguage::Rust)];
+        let mut links = Vec::new();
+        let line = linkable_text_line(
+            "the mean of values",
+            &all,
+            None,
+            &DocLanguage::Rust,
+            0,
+            &mut links,
+            Style::default().fg(Color::White),
+        );
+        let text: String = line
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect();
+
+        assert_eq!(text, "the mean of values");
+        assert!(links.is_empty());
+    }
+
+    #[test]
+    fn class_overview_dedupes_identical_members_but_keeps_overloads() {
+        let class = item("stats::OrderStatistics", DocKind::Class, DocLanguage::Cpp);
+        let mut median_decl = item(
+            "stats::OrderStatistics::median",
+            DocKind::Function,
+            DocLanguage::Cpp,
+        );
+        median_decl.signature = "double median() const;".into();
+        let mut median_duplicate = median_decl.clone();
+        median_duplicate.line = 42;
+        let mut percentile = item(
+            "stats::OrderStatistics::percentile",
+            DocKind::Function,
+            DocLanguage::Cpp,
+        );
+        percentile.signature = "double percentile(double p) const;".into();
+        let mut percentile_overload = percentile.clone();
+        percentile_overload.signature = "double percentile(int rank) const;".into();
+
+        let all = vec![
+            class.clone(),
+            median_decl,
+            median_duplicate,
+            percentile,
+            percentile_overload,
+        ];
+        let members = type_members(&all, &class);
+        let names_and_sigs: Vec<_> = members
+            .iter()
+            .map(|item| (item.name.as_str(), item.signature.as_str()))
+            .collect();
+
+        assert_eq!(members.len(), 3);
+        assert_eq!(
+            names_and_sigs
+                .iter()
+                .filter(|(name, _)| *name == "stats::OrderStatistics::median")
+                .count(),
+            1
+        );
+        assert_eq!(
+            names_and_sigs
+                .iter()
+                .filter(|(name, _)| *name == "stats::OrderStatistics::percentile")
+                .count(),
+            2
+        );
+    }
+
+    #[test]
+    fn documentation_signature_keeps_multiline_declarations() {
+        let mut item = item("integrate", DocKind::Function, DocLanguage::C);
+        item.signature =
+            "double integrate(\n    double (*f)(double),\n    double a,\n    double b\n);".into();
+        let mut lines = Vec::new();
+        let mut links = Vec::new();
+
+        push_signature_lines(&mut lines, &item, 120, &[], None, &mut links);
+        let rendered: Vec<_> = lines
+            .iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect();
+
+        assert!(rendered
+            .iter()
+            .any(|line| line.contains("double integrate(")));
+        assert!(rendered
+            .iter()
+            .any(|line| line.contains("double (*f)(double),")));
+        assert!(rendered.iter().any(|line| line.trim() == ")"));
+    }
+
+    #[test]
+    fn documentation_header_wraps_long_cpp_type_names() {
+        let item = item(
+            "__gnu_pbds::detail::container_base_dispatch::_Alloc",
+            DocKind::Typedef,
+            DocLanguage::Cpp,
+        );
+        let mut lines = Vec::new();
+
+        push_item_header_lines(&mut lines, &item, 32);
+        let rendered = lines
+            .iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>();
+        let joined = rendered.join("");
+
+        assert!(rendered.len() > 1, "{rendered:?}");
+        assert!(joined.contains("[type] "));
+        assert!(joined.contains("__gnu_pbds::detail::container_base_dispatch::_Alloc"));
+        assert!(joined.contains("C++"));
+    }
+
+    #[test]
+    fn markdown_table_is_rendered_without_separator_row() {
+        let mut lines = Vec::new();
+        let mut links = Vec::new();
+        push_doc_text_lines(
+            &mut lines,
+            "| Parameter | Meaning |\n|-----------|---------|\n| `eps` | Absolute error tolerance |",
+            80,
+            &[],
+            None,
+            &DocLanguage::C,
+            &mut links,
+            Style::default().fg(Color::White),
+        );
+        let text = lines
+            .iter()
+            .flat_map(|line| line.spans.iter())
+            .map(|span| span.content.as_ref())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(text.contains("Parameter"));
+        assert!(text.contains("Absolute error tolerance"));
+        assert!(!text.contains("-----------"));
+        assert!(lines
+            .iter()
+            .any(|line| line.spans.iter().any(|span| span.content.contains('┌'))));
+    }
+
+    #[test]
+    fn hidden_cached_items_are_linkable_but_not_listed() {
+        let visible = vec![item(
+            "local::uses_vector",
+            DocKind::Function,
+            DocLanguage::Cpp,
+        )];
+        let hidden = vec![item("std::vector", DocKind::Class, DocLanguage::Cpp)];
+        let mut app = App::new_with_hidden(visible, hidden);
+
+        assert!(!app.rows.is_empty());
+        assert!(app
+            .rows
+            .iter()
+            .all(|row| row.label != "std" && row.label != "vector"));
+        assert_eq!(
+            find_doc_target(&app.all, "std::vector", None, &DocLanguage::Cpp),
+            Some(1)
+        );
+
+        app.select_item_idx(1);
+        assert_eq!(
+            app.selected_item().map(|item| item.name.as_str()),
+            Some("std::vector")
+        );
+        assert!(app
+            .rows
+            .iter()
+            .all(|row| row.label != "std" && row.label != "vector"));
+    }
+
+    #[test]
+    fn c_function_prototype_and_definition_are_source_variants_not_overloads() {
+        let root = temp_root("source-variants");
+        let header = root.join("mathlib.h");
+        let source = root.join("mathlib.c");
+        std::fs::write(
+            &header,
+            "/** Clamp. */\ndouble clamp(double v, double lo, double hi);\n",
+        )
+        .unwrap();
+        std::fs::write(
+            &source,
+            "#include \"mathlib.h\"\ndouble clamp(double v, double lo, double hi) { return v; }\n",
+        )
+        .unwrap();
+
+        let mut doc = item("clamp", DocKind::Function, DocLanguage::C);
+        doc.file = header;
+        doc.line = 1;
+        doc.signature = "double clamp(double v, double lo, double hi);".into();
+
+        let variants = source_variants_for_item(&doc);
+        assert_eq!(variants.len(), 2);
+        assert!(variants.iter().any(|item| item.file.ends_with("mathlib.h")));
+        assert!(variants.iter().any(|item| item.file.ends_with("mathlib.c")));
+        assert_eq!(super::source_variant_label(&variants[0]), "prototype");
+        assert_eq!(super::source_variant_label(&variants[1]), "definition");
+
+        let items = vec![doc.clone(), {
+            let mut definition = doc;
+            definition.file = source;
+            definition.line = 2;
+            definition.signature =
+                "double clamp(double v, double lo, double hi) { return v; }".into();
+            definition
+        }];
+        assert_eq!(overload_indices(&items, 0), vec![0]);
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn source_view_reads_full_file_not_snippet() {
+        let root = temp_root("full-source");
+        let source = root.join("mathlib.c");
+        std::fs::write(
+            &source,
+            "double before(void) { return 0.0; }\n\n/** Clamp. */\ndouble clamp(double v) { return v; }\n\ndouble after(void) { return 1.0; }\n",
+        )
+        .unwrap();
+
+        let mut doc = item("clamp", DocKind::Function, DocLanguage::C);
+        doc.file = source;
+        doc.line = 3;
+
+        let text = super::extract_source_text(&doc);
+        assert!(text.contains("double before"));
+        assert!(text.contains("double clamp"));
+        assert!(text.contains("double after"));
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     fn item(name: &str, kind: DocKind, lang: DocLanguage) -> DocItem {
         DocItem {
             name: name.to_string(),
@@ -2658,5 +3765,12 @@ mod tests {
             signature: String::new(),
             meta: DocMeta::default(),
         }
+    }
+
+    fn temp_root(label: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!("docify-tui-{label}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        root
     }
 }

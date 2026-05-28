@@ -7,4 +7,4 @@
 pub mod browser;
 pub mod common;
 
-pub use browser::run_doc_browser;
+pub use browser::{run_doc_browser, run_doc_browser_with_hidden, run_doc_browser_with_items};

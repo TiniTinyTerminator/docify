@@ -43,6 +43,31 @@ and a terminal TUI (`render_tui.rs`). Gaps:
   cleanup (`sig_ada`) does not handle generic formal parameters. Track as a known
   gap until a real Ada project is tested.
 
+## Library API
+
+- **Clean public re-exports**: `DocItem`, `DocSet`, `DocExtractor`, `ExtractorRegistry`,
+  `DocKind`, `DocLanguage`, `DocTag`, `TagKind`, `Access`, `DocMeta` are buried under
+  `docify::extract::*`. They should be re-exported from the crate root so downstream users
+  can write `use docify::DocItem` instead of `use docify::extract::DocItem`.
+  ~~Done — see `lib.rs`.~~
+
+- **`source_line_range(item, max_lines) -> (usize, usize)`**: `DocItem.line` gives the
+  opening doc-comment line but no end. A helper that returns `(start, end)` as 1-based
+  line numbers without allocating the source text makes editor integrations and LSP tools
+  easier to write.
+  ~~Done — `agent::source_line_range()`.~~
+
+- **`resolve_refs(item, set) -> Vec<&DocItem>`**: `@see`/`\see`/`see also` tags are
+  captured but never resolved to `DocItem` references. A first-class API function lets
+  callers traverse cross-references programmatically.
+  ~~Done — `docify::resolve_refs()`.~~
+
+- **Feature-gate TUI deps**: `ratatui` and `crossterm` are unconditional dependencies.
+  Library consumers that only need parsing pull in heavy terminal crates for nothing.
+  Gate both behind an optional `tui` feature (enabled by default so the binary still
+  works out of the box; library users can opt out with `default-features = false`).
+  ~~Done — `[features] tui = [...]`.~~
+
 ## Testing
 
 - Tests for the Go extractor's package-qualification logic (multi-package repos).

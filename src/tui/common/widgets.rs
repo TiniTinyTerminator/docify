@@ -2,7 +2,7 @@ use ratatui::{
     layout::Rect,
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph},
+    widgets::{Block, BorderType, Borders, Paragraph},
     Frame,
 };
 
@@ -50,7 +50,14 @@ pub fn word_wrap(text: &str, width: usize) -> Vec<String> {
 }
 
 fn is_preformatted_line(line: &str) -> bool {
-    contains_box_drawing(line) || contains_nonleading_repeated_spaces(line)
+    is_markdown_table_line(line)
+        || contains_box_drawing(line)
+        || contains_nonleading_repeated_spaces(line)
+}
+
+fn is_markdown_table_line(line: &str) -> bool {
+    let trimmed = line.trim();
+    trimmed.starts_with('|') && trimmed.ends_with('|') && trimmed.matches('|').count() >= 2
 }
 
 fn contains_box_drawing(line: &str) -> bool {
@@ -107,6 +114,7 @@ pub fn render_search_bar(f: &mut Frame, title: &str, query: &str, area: Rect) {
         .block(
             Block::default()
                 .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
                 .border_style(Style::default().fg(COLOR_SEARCH))
                 .title(Span::styled(
                     title,
@@ -135,6 +143,7 @@ pub fn render_error_bar(f: &mut Frame, text: &str, area: Rect) {
 pub fn render_empty_panel(f: &mut Frame, title: &str, hint: &str, area: Rect) {
     let block = Block::default()
         .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(COLOR_BORDER))
         .title(Span::styled(title, Style::default().fg(COLOR_TITLE)));
     let inner = block.inner(area);
@@ -157,5 +166,11 @@ mod tests {
     fn word_wrap_preserves_repeated_internal_spaces() {
         let line = "e  f(t)         F(s-a)";
         assert_eq!(word_wrap(line, 10), vec![line.to_string()]);
+    }
+
+    #[test]
+    fn word_wrap_preserves_markdown_table_rows() {
+        let line = "| Parameter | Meaning |";
+        assert_eq!(word_wrap(line, 8), vec![line.to_string()]);
     }
 }

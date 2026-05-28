@@ -17,13 +17,6 @@ pub fn render_math_block(raw: &str) -> String {
 }
 
 pub fn render_math_block_with(raw: &str, mode: Mode) -> String {
-    #[cfg(feature = "libtexprintf")]
-    if mode == Mode::Unicode {
-        if let Ok(rendered) = libtexprintf::render(strip_delimiters(raw)) {
-            return rendered;
-        }
-    }
-
     render_one(strip_delimiters(raw), mode)
 }
 
@@ -2024,7 +2017,7 @@ mod alignment_tests {
     }
 }
 
-#[cfg(all(test, not(feature = "libtexprintf")))]
+#[cfg(test)]
 mod tests {
     use super::*;
 

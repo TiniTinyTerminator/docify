@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand};
 
-use docify::agent::{extract_source, ContextJson, OutlineItem, SymbolJson};
+use docify::agent::{extract_source, ContextJson, Envelope, OutlineItem, SymbolJson};
 use docify::cache::DocCache;
 use docify::extract::{extract_dir, DocItem, DocSet};
 use docify::render;
@@ -246,7 +246,10 @@ fn cmd_get(name: &str, raw_dirs: Vec<PathBuf>, cache: CacheInput) {
     match find_symbol_in_items(name, &items) {
         Some(item) => {
             let json: SymbolJson = item.into();
-            println!("{}", serde_json::to_string_pretty(&json).unwrap());
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&Envelope::new(json)).unwrap()
+            );
         }
         None => {
             eprintln!("error: symbol '{name}' not found");
@@ -289,7 +292,10 @@ fn cmd_context(name: &str, raw_dirs: Vec<PathBuf>, max_lines: usize, cache: Cach
                 source,
                 doc: item.into(),
             };
-            println!("{}", serde_json::to_string_pretty(&ctx).unwrap());
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&Envelope::new(ctx)).unwrap()
+            );
         }
         None => {
             eprintln!("error: symbol '{name}' not found");
@@ -317,7 +323,10 @@ fn cmd_search(query: &str, raw_dirs: Vec<PathBuf>, cache: CacheInput) {
         eprintln!("no matches for '{query}'");
         std::process::exit(1);
     }
-    println!("{}", serde_json::to_string_pretty(&results).unwrap());
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&Envelope::new(results)).unwrap()
+    );
 }
 
 // ── outline ───────────────────────────────────────────────────────────────────
@@ -327,7 +336,10 @@ fn cmd_outline(raw_dirs: Vec<PathBuf>, cache: CacheInput) {
 
     let outline: Vec<OutlineItem> = items.iter().map(OutlineItem::from).collect();
 
-    println!("{}", serde_json::to_string_pretty(&outline).unwrap());
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&Envelope::new(outline)).unwrap()
+    );
 }
 
 // ── browse ────────────────────────────────────────────────────────────────────

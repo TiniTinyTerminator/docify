@@ -4,6 +4,30 @@ use serde::Serialize;
 
 use crate::extract::{extract_dir, DocItem, DocLanguage, TagKind};
 
+// ── Wire protocol versioning ──────────────────────────────────────────────────
+
+/// Increment when any JSON output field is added, removed, or renamed.
+pub const SCHEMA_VERSION: u32 = 1;
+
+/// Top-level envelope for all JSON-outputting docify commands.
+///
+/// Consumers should check `schema_version == SCHEMA_VERSION` and reject
+/// higher values with a clear error rather than silently misparting the data.
+#[derive(Serialize)]
+pub struct Envelope<T: Serialize> {
+    pub schema_version: u32,
+    pub data: T,
+}
+
+impl<T: Serialize> Envelope<T> {
+    pub fn new(data: T) -> Self {
+        Self {
+            schema_version: SCHEMA_VERSION,
+            data,
+        }
+    }
+}
+
 // ── JSON output types ─────────────────────────────────────────────────────────
 
 #[derive(Serialize)]

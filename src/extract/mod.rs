@@ -6,13 +6,21 @@ use serde::{Deserialize, Serialize};
 mod ada;
 pub mod common;
 mod cpp;
+mod csharp;
 mod d;
 mod fortran;
 mod go;
+mod haskell;
 mod java;
 mod kotlin;
+mod lua;
+mod php;
+mod python;
+mod r;
+mod ruby;
 mod rust;
 mod swift;
+mod typescript;
 mod zig;
 
 // Re-export shared helpers for extract_clang.rs (only needed when clang feature is active)
@@ -35,6 +43,15 @@ pub enum DocLanguage {
     Zig,
     Kotlin,
     Swift,
+    Python,
+    TypeScript,
+    JavaScript,
+    CSharp,
+    Php,
+    Ruby,
+    Lua,
+    R,
+    Haskell,
     Unknown,
 }
 
@@ -52,6 +69,15 @@ impl DocLanguage {
             Self::Zig => "Zig",
             Self::Kotlin => "Kotlin",
             Self::Swift => "Swift",
+            Self::Python => "Python",
+            Self::TypeScript => "TypeScript",
+            Self::JavaScript => "JavaScript",
+            Self::CSharp => "C#",
+            Self::Php => "PHP",
+            Self::Ruby => "Ruby",
+            Self::Lua => "Lua",
+            Self::R => "R",
+            Self::Haskell => "Haskell",
             Self::Unknown => "Unknown",
         }
     }
@@ -519,6 +545,15 @@ pub(crate) fn lang_from_ext(ext: &str) -> DocLanguage {
         "zig" => DocLanguage::Zig,
         "kt" | "kts" => DocLanguage::Kotlin,
         "swift" => DocLanguage::Swift,
+        "py" | "pyi" => DocLanguage::Python,
+        "ts" | "tsx" => DocLanguage::TypeScript,
+        "js" | "jsx" | "mjs" | "cjs" => DocLanguage::JavaScript,
+        "cs" => DocLanguage::CSharp,
+        "php" => DocLanguage::Php,
+        "rb" => DocLanguage::Ruby,
+        "lua" => DocLanguage::Lua,
+        "r" | "R" => DocLanguage::R,
+        "hs" | "lhs" => DocLanguage::Haskell,
         _ => DocLanguage::Unknown,
     }
 }
@@ -584,6 +619,15 @@ impl Default for ExtractorRegistry {
         r.register(Box::new(zig::ZigExtractor));
         r.register(Box::new(kotlin::KotlinExtractor));
         r.register(Box::new(swift::SwiftExtractor));
+        r.register(Box::new(python::PythonExtractor));
+        r.register(Box::new(typescript::TypeScriptExtractor));
+        r.register(Box::new(typescript::JavaScriptExtractor));
+        r.register(Box::new(csharp::CSharpExtractor));
+        r.register(Box::new(php::PhpExtractor));
+        r.register(Box::new(ruby::RubyExtractor));
+        r.register(Box::new(lua::LuaExtractor));
+        r.register(Box::new(r::RExtractor));
+        r.register(Box::new(haskell::HaskellExtractor));
         r
     }
 }
@@ -720,6 +764,15 @@ mod tests {
             DocLanguage::Zig => "zig",
             DocLanguage::Kotlin => "kt",
             DocLanguage::Swift => "swift",
+            DocLanguage::Python => "py",
+            DocLanguage::TypeScript => "ts",
+            DocLanguage::JavaScript => "js",
+            DocLanguage::CSharp => "cs",
+            DocLanguage::Php => "php",
+            DocLanguage::Ruby => "rb",
+            DocLanguage::Lua => "lua",
+            DocLanguage::R => "r",
+            DocLanguage::Haskell => "hs",
             DocLanguage::Unknown => return vec![],
         };
         let path = Path::new("test").with_extension(ext);

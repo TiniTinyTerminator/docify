@@ -2972,7 +2972,61 @@ fn is_keyword(token: &str, lang: &DocLanguage) -> bool {
             token.to_ascii_lowercase().as_str(),
             "module" | "subroutine" | "function" | "integer" | "real" | "intent" | "end"
         ),
-        DocLanguage::D | DocLanguage::Zig | DocLanguage::Unknown => false,
+        DocLanguage::D | DocLanguage::Zig => false,
+        DocLanguage::Python => matches!(
+            token,
+            "def" | "class" | "return" | "import" | "from" | "as" | "with"
+                | "if" | "elif" | "else" | "for" | "while" | "try" | "except"
+                | "lambda" | "yield" | "async" | "await" | "pass" | "raise"
+        ),
+        DocLanguage::TypeScript | DocLanguage::JavaScript => matches!(
+            token,
+            "function" | "class" | "interface" | "type" | "enum" | "const"
+                | "let" | "var" | "return" | "export" | "import" | "default"
+                | "extends" | "implements" | "new" | "this" | "async" | "await"
+                | "typeof" | "instanceof" | "in" | "of" | "for" | "while"
+        ),
+        DocLanguage::CSharp => matches!(
+            token,
+            "public" | "private" | "protected" | "internal" | "static"
+                | "class" | "struct" | "interface" | "enum" | "namespace"
+                | "void" | "return" | "new" | "this" | "base" | "override"
+                | "virtual" | "abstract" | "sealed" | "readonly" | "const"
+                | "using" | "async" | "await" | "delegate" | "event"
+        ),
+        DocLanguage::Php => matches!(
+            token,
+            "public" | "private" | "protected" | "static" | "function"
+                | "class" | "interface" | "trait" | "abstract" | "final"
+                | "return" | "new" | "extends" | "implements" | "echo"
+                | "namespace" | "use" | "require" | "include"
+        ),
+        DocLanguage::Ruby => matches!(
+            token,
+            "def" | "class" | "module" | "end" | "return" | "do"
+                | "if" | "elsif" | "else" | "unless" | "while" | "for"
+                | "begin" | "rescue" | "ensure" | "raise" | "yield"
+                | "self" | "super" | "attr_accessor" | "attr_reader" | "attr_writer"
+        ),
+        DocLanguage::Lua => matches!(
+            token,
+            "function" | "local" | "return" | "end" | "if" | "then"
+                | "else" | "elseif" | "while" | "do" | "for" | "repeat"
+                | "until" | "and" | "or" | "not" | "nil" | "true" | "false"
+        ),
+        DocLanguage::R => matches!(
+            token,
+            "function" | "return" | "if" | "else" | "for" | "while"
+                | "repeat" | "break" | "next" | "TRUE" | "FALSE" | "NULL"
+                | "NA" | "Inf" | "NaN" | "library" | "require"
+        ),
+        DocLanguage::Haskell => matches!(
+            token,
+            "module" | "where" | "import" | "data" | "newtype" | "type"
+                | "class" | "instance" | "let" | "in" | "do" | "case"
+                | "of" | "if" | "then" | "else" | "deriving" | "forall"
+        ),
+        DocLanguage::Unknown => false,
     }
 }
 
@@ -3068,14 +3122,23 @@ fn language_order(lang: &DocLanguage) -> u8 {
         DocLanguage::C => 0,
         DocLanguage::Cpp => 1,
         DocLanguage::Rust => 2,
-        DocLanguage::Fortran => 3,
-        DocLanguage::D => 4,
-        DocLanguage::Ada => 5,
-        DocLanguage::Java => 6,
-        DocLanguage::Go => 7,
-        DocLanguage::Zig => 8,
-        DocLanguage::Kotlin => 9,
+        DocLanguage::Python => 3,
+        DocLanguage::TypeScript => 4,
+        DocLanguage::JavaScript => 5,
+        DocLanguage::CSharp => 6,
+        DocLanguage::Java => 7,
+        DocLanguage::Kotlin => 8,
+        DocLanguage::Go => 9,
         DocLanguage::Swift => 10,
+        DocLanguage::Ruby => 11,
+        DocLanguage::Php => 12,
+        DocLanguage::Lua => 13,
+        DocLanguage::R => 14,
+        DocLanguage::Haskell => 15,
+        DocLanguage::Fortran => 16,
+        DocLanguage::D => 17,
+        DocLanguage::Ada => 18,
+        DocLanguage::Zig => 19,
         DocLanguage::Unknown => 255,
     }
 }
@@ -3173,7 +3236,19 @@ fn item_group_parts(item: &DocItem) -> Vec<String> {
                 parts
             }
         }
-        DocLanguage::Java | DocLanguage::Kotlin | DocLanguage::Swift | DocLanguage::Zig => {
+        DocLanguage::Java
+        | DocLanguage::Kotlin
+        | DocLanguage::Swift
+        | DocLanguage::Zig
+        | DocLanguage::TypeScript
+        | DocLanguage::JavaScript
+        | DocLanguage::CSharp
+        | DocLanguage::Php
+        | DocLanguage::Ruby
+        | DocLanguage::Lua
+        | DocLanguage::R
+        | DocLanguage::Haskell
+        | DocLanguage::Python => {
             if is_type_group_doc_item(item) {
                 return split_scope(&item.name);
             }

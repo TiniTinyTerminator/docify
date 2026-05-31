@@ -508,9 +508,18 @@ fn load_language_caches(project_items: &[DocItem]) -> Vec<DocItem> {
             docify::extract::DocLanguage::Kotlin => Some("kotlin-std"),
             docify::extract::DocLanguage::Swift => Some("swift-std"),
             docify::extract::DocLanguage::D => Some("d-std"),
+            docify::extract::DocLanguage::Python => Some("python-std"),
+            docify::extract::DocLanguage::TypeScript
+            | docify::extract::DocLanguage::JavaScript => Some("js-std"),
+            docify::extract::DocLanguage::CSharp => Some("dotnet-std"),
+            docify::extract::DocLanguage::Ruby => Some("ruby-std"),
+            docify::extract::DocLanguage::Haskell => Some("haskell-std"),
             docify::extract::DocLanguage::Ada
             | docify::extract::DocLanguage::Fortran
             | docify::extract::DocLanguage::Zig
+            | docify::extract::DocLanguage::Php
+            | docify::extract::DocLanguage::Lua
+            | docify::extract::DocLanguage::R
             | docify::extract::DocLanguage::Unknown => None,
         };
         if let Some(name) = name {

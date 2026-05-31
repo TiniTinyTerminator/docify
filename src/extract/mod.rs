@@ -21,6 +21,7 @@ pub(crate) use common::{build_item, item_has_content};
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
+/// Source language of an extracted doc item.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum DocLanguage {
     C,
@@ -56,6 +57,7 @@ impl DocLanguage {
     }
 }
 
+/// Classification of an extracted documentation item.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DocKind {
     Function,
@@ -89,6 +91,7 @@ impl DocKind {
     }
 }
 
+/// Semantic category of a [`DocTag`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TagKind {
     Brief,
@@ -120,6 +123,7 @@ impl TagKind {
     }
 }
 
+/// A structured tag extracted from a doc comment (e.g. `@param`, `@return`, `@note`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DocTag {
     pub kind: TagKind,
@@ -154,6 +158,9 @@ pub struct DocMeta {
     pub group: Option<String>,
 }
 
+/// A single documented symbol extracted from source code.
+///
+/// Produced by [`extract_dir`] or [`DocExtractor::extract`] and collected into a [`DocSet`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DocItem {
     pub name: String,
@@ -469,6 +476,7 @@ fn strip_c_fn_quals(s: &str) -> &str {
     t
 }
 
+/// Collection of [`DocItem`]s extracted from a source tree, with a shared source root for relative path display.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DocSet {
     pub items: Vec<DocItem>,

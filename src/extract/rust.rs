@@ -1,6 +1,22 @@
 use super::common::{
     build_item, collect_c_block, collect_line_block, first_ident, item_has_content, next_non_blank,
 };
+
+/// Like `next_non_blank` but also skips `#[...]` attribute lines so that
+/// `#[derive(...)]` / `#[cfg(...)]` between a doc comment and a `pub struct`
+/// are transparent to symbol detection.
+fn next_decl_line<'a>(lines: &[&'a str], from: usize) -> &'a str {
+    let mut i = from;
+    loop {
+        let Some(&l) = lines.get(i) else { return "" };
+        let t = l.trim();
+        if t.is_empty() || t.starts_with("#[") || t.starts_with("#![") {
+            i += 1;
+            continue;
+        }
+        return t;
+    }
+}
 use super::{DocExtractor, DocItem, DocKind, DocLanguage};
 use std::path::Path;
 
@@ -30,7 +46,7 @@ pub(super) fn extract_rust(src: &str, file: &Path) -> Vec<DocItem> {
 
         if t.starts_with("///") && !t.starts_with("////") {
             let (block, end) = collect_line_block(&lines, i, "///");
-            let sym = next_non_blank(&lines, end + 1);
+            let sym = next_decl_line(&lines, end + 1);
             let (name, kind) = detect_rust_symbol(sym);
             let ns = mod_stack.last().map(|(_, p)| p.as_str()).unwrap_or("");
             let item = build_item(
@@ -51,7 +67,7 @@ pub(super) fn extract_rust(src: &str, file: &Path) -> Vec<DocItem> {
 
         if t.starts_with("/**") && !t.starts_with("/***/") {
             let (block, end) = collect_c_block(&lines, i);
-            let sym = next_non_blank(&lines, end + 1);
+            let sym = next_decl_line(&lines, end + 1);
             let (name, kind) = detect_rust_symbol(sym);
             let ns = mod_stack.last().map(|(_, p)| p.as_str()).unwrap_or("");
             let item = build_item(

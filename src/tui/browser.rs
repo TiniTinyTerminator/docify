@@ -3070,8 +3070,8 @@ fn section_order(item: &DocItem) -> u8 {
 
 fn item_sort_key(item: &DocItem) -> (u8, u8, String, u8, String) {
     (
-        section_order(item),
         language_order(&item.lang),
+        section_order(item),
         tree_path(item).join("\u{1f}").to_ascii_lowercase(),
         kind_order(&item.kind),
         item.name.to_ascii_lowercase(),
@@ -3121,6 +3121,13 @@ const SEC_CLASSES: &str = "Classes & Types";
 const SEC_NAMESPACES: &str = "Namespaces";
 const SEC_FREE: &str = "Free Symbols";
 
+fn language_group_label(lang: &DocLanguage) -> &'static str {
+    match lang {
+        DocLanguage::C | DocLanguage::Cpp => "C/C++",
+        _ => lang.label(),
+    }
+}
+
 fn is_type_kind(kind: &DocKind) -> bool {
     matches!(
         kind,
@@ -3129,40 +3136,37 @@ fn is_type_kind(kind: &DocKind) -> bool {
 }
 
 fn tree_path(item: &DocItem) -> Vec<String> {
+    let lang = language_group_label(&item.lang).to_string();
+
     if item.name.is_empty() {
-        return vec![SEC_FREE.to_string()];
+        return vec![lang, SEC_FREE.to_string()];
     }
 
-    // Types — become group nodes directly under "Classes & Types".
+    // Types — become group nodes under lang → "Classes & Types".
     if is_type_kind(&item.kind) {
-        let mut path = vec![SEC_CLASSES.to_string()];
-        path.push(item.name.clone());
-        return path;
+        return vec![lang, SEC_CLASSES.to_string(), item.name.clone()];
     }
 
-    // Module/namespace nodes — under "Namespaces".
+    // Module/namespace nodes — under lang → "Namespaces".
     if matches!(item.kind, DocKind::Module) {
-        let mut path = vec![SEC_NAMESPACES.to_string()];
-        path.push(item.name.clone());
-        return path;
+        return vec![lang, SEC_NAMESPACES.to_string(), item.name.clone()];
     }
 
-    // Non-type with a known parent type → "Classes & Types" → parent.
+    // Non-type with a known parent type → lang → "Classes & Types" → parent.
     if let Some(parent) = item.meta.parent.as_deref().filter(|p| !p.is_empty()) {
-        return vec![SEC_CLASSES.to_string(), parent.to_string()];
+        return vec![lang, SEC_CLASSES.to_string(), parent.to_string()];
     }
 
-    // Non-type with a scoped name (ns::fn or Type::method) — determine the
-    // prefix by stripping the last component.
+    // Non-type with a scoped name — put it under lang → "Namespaces" → prefix.
     let sep = if item.name.contains("::") { "::" } else { "." };
     if let Some((prefix, _)) = item.name.rsplit_once(sep) {
         if !prefix.is_empty() {
-            return vec![SEC_NAMESPACES.to_string(), prefix.to_string()];
+            return vec![lang, SEC_NAMESPACES.to_string(), prefix.to_string()];
         }
     }
 
     // No scope → free symbol.
-    vec![SEC_FREE.to_string()]
+    vec![lang, SEC_FREE.to_string()]
 }
 
 fn is_group_doc_item(item: &DocItem) -> bool {
@@ -3301,9 +3305,10 @@ mod tests {
         mean.file = "stats.h".into();
         mean.brief = "Arithmetic mean.".into();
         let mut app = App::new_with_visible(vec![namespace, mean], vec![0, 1]);
-        // Expand the Doxygen-style "Namespaces" section and the "stats" group.
-        app.expanded.insert("Namespaces".into());
-        app.expanded.insert("Namespaces\u{1f}stats".into());
+        // Expand the language group, then the Namespaces section and "stats" group.
+        app.expanded.insert("C/C++".into());
+        app.expanded.insert("C/C++\u{1f}Namespaces".into());
+        app.expanded.insert("C/C++\u{1f}Namespaces\u{1f}stats".into());
         app.rebuild_rows();
 
         let namespace_row = app
@@ -3354,7 +3359,7 @@ mod tests {
         let item = item("Builder", DocKind::Struct, DocLanguage::Rust);
         assert_eq!(
             tree_path(&item),
-            vec!["Classes & Types".to_string(), "Builder".to_string()]
+            vec!["Rust".to_string(), "Classes & Types".to_string(), "Builder".to_string()]
         );
     }
 
@@ -3363,14 +3368,17 @@ mod tests {
         let item = item("collections.IntStack", DocKind::Class, DocLanguage::Java);
         assert_eq!(
             tree_path(&item),
-            vec!["Classes & Types".to_string(), "collections.IntStack".to_string()]
+            vec!["Java".to_string(), "Classes & Types".to_string(), "collections.IntStack".to_string()]
         );
     }
 
     #[test]
     fn free_function_routes_to_free_symbols() {
         let item = item("compute", DocKind::Function, DocLanguage::Rust);
-        assert_eq!(tree_path(&item), vec!["Free Symbols".to_string()]);
+        assert_eq!(
+            tree_path(&item),
+            vec!["Rust".to_string(), "Free Symbols".to_string()]
+        );
     }
 
     #[test]
@@ -3378,7 +3386,7 @@ mod tests {
         let item = item("math::dot", DocKind::Function, DocLanguage::Cpp);
         assert_eq!(
             tree_path(&item),
-            vec!["Namespaces".to_string(), "math".to_string()]
+            vec!["C/C++".to_string(), "Namespaces".to_string(), "math".to_string()]
         );
     }
 

@@ -4,6 +4,143 @@ use std::path::{Path, PathBuf};
 
 use toml::Value as TomlValue;
 
+use crate::extract::PackageId;
+
+// ── Manifest reading ──────────────────────────────────────────────────────────
+
+/// Walk upward from `start` looking for a recognised project manifest and
+/// return the `(name, version)` pair declared in it.
+///
+/// Stops at the filesystem root.  The nearest (deepest) manifest wins so
+/// that workspace members shadow their workspace root.
+pub fn package_for_file(start: &Path) -> Option<PackageId> {
+    let dir = if start.is_file() { start.parent()? } else { start };
+    for ancestor in dir.ancestors() {
+        if let Some(pkg) = read_manifest_in(ancestor) {
+            return Some(pkg);
+        }
+    }
+    None
+}
+
+fn read_manifest_in(dir: &Path) -> Option<PackageId> {
+    // Priority order: most specific first.
+    read_cargo_toml(dir)
+        .or_else(|| read_freight_toml(dir))
+        .or_else(|| read_package_json_name(dir))
+        .or_else(|| read_pyproject_toml(dir))
+        .or_else(|| read_go_mod(dir))
+        .or_else(|| read_composer_json(dir))
+        .or_else(|| read_gemspec(dir))
+        .or_else(|| read_stack_yaml(dir))
+}
+
+fn toml_pkg_str<'a>(value: &'a TomlValue, key: &str) -> Option<&'a str> {
+    value.get("package")?.get(key)?.as_str()
+}
+
+fn read_cargo_toml(dir: &Path) -> Option<PackageId> {
+    let text = fs::read_to_string(dir.join("Cargo.toml")).ok()?;
+    let v = text.parse::<TomlValue>().ok()?;
+    let name = toml_pkg_str(&v, "name")?.to_owned();
+    let version = toml_pkg_str(&v, "version").unwrap_or("0.0.0").to_owned();
+    Some(PackageId { name, version })
+}
+
+fn read_freight_toml(dir: &Path) -> Option<PackageId> {
+    let text = fs::read_to_string(dir.join("freight.toml")).ok()?;
+    let v = text.parse::<TomlValue>().ok()?;
+    let name = toml_pkg_str(&v, "name")?.to_owned();
+    let version = toml_pkg_str(&v, "version").unwrap_or("0.0.0").to_owned();
+    Some(PackageId { name, version })
+}
+
+fn read_package_json_name(dir: &Path) -> Option<PackageId> {
+    let text = fs::read_to_string(dir.join("package.json")).ok()?;
+    let v: serde_json::Value = serde_json::from_str(&text).ok()?;
+    let name = v.get("name")?.as_str()?.to_owned();
+    let version = v.get("version").and_then(|v| v.as_str()).unwrap_or("0.0.0").to_owned();
+    Some(PackageId { name, version })
+}
+
+fn read_pyproject_toml(dir: &Path) -> Option<PackageId> {
+    let text = fs::read_to_string(dir.join("pyproject.toml")).ok()?;
+    let v = text.parse::<TomlValue>().ok()?;
+    // [project] section (PEP 621)
+    let name = v.get("project")?.get("name")?.as_str()?.to_owned();
+    let version = v.get("project")
+        .and_then(|p| p.get("version"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("0.0.0")
+        .to_owned();
+    Some(PackageId { name, version })
+}
+
+fn read_go_mod(dir: &Path) -> Option<PackageId> {
+    let text = fs::read_to_string(dir.join("go.mod")).ok()?;
+    // `module github.com/user/repo` — use the last path segment as the name
+    let module_line = text.lines().find(|l| l.trim_start().starts_with("module "))?;
+    let module_path = module_line.trim_start().strip_prefix("module ")?.trim();
+    let name = module_path.rsplit('/').next().unwrap_or(module_path).to_owned();
+    // `go 1.22` as version
+    let version = text.lines()
+        .find(|l| l.trim_start().starts_with("go "))
+        .and_then(|l| l.trim_start().strip_prefix("go ").map(str::trim))
+        .unwrap_or("0.0.0")
+        .to_owned();
+    Some(PackageId { name, version })
+}
+
+fn read_composer_json(dir: &Path) -> Option<PackageId> {
+    let text = fs::read_to_string(dir.join("composer.json")).ok()?;
+    let v: serde_json::Value = serde_json::from_str(&text).ok()?;
+    // composer name is "vendor/package"; use the package part
+    let full_name = v.get("name")?.as_str()?;
+    let name = full_name.rsplit('/').next().unwrap_or(full_name).to_owned();
+    let version = v.get("version").and_then(|v| v.as_str()).unwrap_or("0.0.0").to_owned();
+    Some(PackageId { name, version })
+}
+
+fn read_gemspec(dir: &Path) -> Option<PackageId> {
+    // Look for *.gemspec or Gemfile
+    let gemspec = fs::read_dir(dir).ok()?
+        .filter_map(|e| e.ok())
+        .find(|e| e.path().extension().and_then(|x| x.to_str()) == Some("gemspec"))?
+        .path();
+    let text = fs::read_to_string(gemspec).ok()?;
+    // s.name = "my-gem"
+    let name = text.lines()
+        .find_map(|l| {
+            let l = l.trim();
+            let rest = l.strip_prefix("s.name").or_else(|| l.strip_prefix("spec.name"))?;
+            let rest = rest.trim_start().strip_prefix('=')?.trim();
+            Some(rest.trim_matches(|c| c == '"' || c == '\'').to_owned())
+        })?;
+    let version = text.lines()
+        .find_map(|l| {
+            let l = l.trim();
+            let rest = l.strip_prefix("s.version").or_else(|| l.strip_prefix("spec.version"))?;
+            let rest = rest.trim_start().strip_prefix('=')?.trim();
+            Some(rest.trim_matches(|c| c == '"' || c == '\'').to_owned())
+        })
+        .unwrap_or_else(|| "0.0.0".to_owned());
+    Some(PackageId { name, version })
+}
+
+fn read_stack_yaml(dir: &Path) -> Option<PackageId> {
+    // package.yaml (hpack) takes priority over stack.yaml
+    let text = fs::read_to_string(dir.join("package.yaml"))
+        .or_else(|_| fs::read_to_string(dir.join("stack.yaml")))
+        .ok()?;
+    let v = text.parse::<TomlValue>().ok()?;  // hpack uses YAML but basic fields parse as TOML
+    // Fallback: just use directory name
+    let name = v.get("name").and_then(|v| v.as_str())
+        .unwrap_or_else(|| dir.file_name().and_then(|n| n.to_str()).unwrap_or("unknown"))
+        .to_owned();
+    let version = v.get("version").and_then(|v| v.as_str()).unwrap_or("0.0.0").to_owned();
+    Some(PackageId { name, version })
+}
+
 /// Expand scan roots with locally available dependency source directories.
 ///
 /// This is intentionally offline-only: project files can point us at Cargo,
@@ -378,5 +515,80 @@ mod tests {
             return false;
         };
         dirs.iter().any(|dir| dir == &path)
+    }
+}
+
+#[cfg(test)]
+mod manifest_tests {
+    use super::*;
+
+    #[test]
+    fn package_for_file_finds_cargo_toml() {
+        let path = std::path::Path::new("examples/multi-project/string-proc/src/lib.rs");
+        let pkg = package_for_file(path);
+        assert!(pkg.is_some(), "should find Cargo.toml, got None");
+        let pkg = pkg.unwrap();
+        assert_eq!(pkg.name, "string-proc");
+        assert_eq!(pkg.version, "0.3.1");
+    }
+
+    #[test]
+    fn package_for_file_finds_package_json() {
+        let path = std::path::Path::new("examples/multi-project/web-utils/src/url.ts");
+        let pkg = package_for_file(path).expect("should find package.json");
+        assert_eq!(pkg.name, "web-utils");
+        assert_eq!(pkg.version, "1.2.0");
+    }
+
+    #[test]
+    fn package_for_file_finds_freight_toml() {
+        let path = std::path::Path::new("examples/multi-project/native-math/src/interp.h");
+        let pkg = package_for_file(path).expect("should find freight.toml");
+        assert_eq!(pkg.name, "native-math");
+    }
+
+    #[test]
+    fn package_for_file_finds_pyproject_toml() {
+        let path = std::path::Path::new("examples/multi-project/analysis/src/frame.py");
+        let pkg = package_for_file(path).expect("should find pyproject.toml");
+        assert_eq!(pkg.name, "analysis");
+    }
+
+    #[test]
+    fn package_for_file_finds_go_mod() {
+        let path = std::path::Path::new("examples/multi-project/http-kit/src/retry.go");
+        let pkg = package_for_file(path).expect("should find go.mod");
+        assert_eq!(pkg.name, "http-kit");
+    }
+
+    #[test]
+    fn package_for_file_finds_composer_json() {
+        let path = std::path::Path::new("examples/multi-project/phputils/src/Collection.php");
+        let pkg = package_for_file(path).expect("should find composer.json");
+        assert_eq!(pkg.name, "phputils");
+    }
+
+    #[test]
+    fn extract_dir_stamps_package_on_items() {
+        let dir = std::path::Path::new("examples/multi-project/string-proc");
+        let items = crate::extract::extract_dir(dir).items;
+        assert!(!items.is_empty(), "expected items from string-proc");
+        for item in &items {
+            let pkg = item.meta.package.as_ref()
+                .unwrap_or_else(|| panic!("item '{}' has no package", item.name));
+            assert_eq!(pkg.name, "string-proc");
+        }
+    }
+
+    #[test]
+    fn extract_dir_groups_multi_project() {
+        let dir = std::path::Path::new("examples/multi-project");
+        let items = crate::extract::extract_dir(dir).items;
+        let pkgs: std::collections::HashSet<_> = items.iter()
+            .filter_map(|i| i.meta.package.as_ref().map(|p| p.name.as_str()))
+            .collect();
+        for expected in ["string-proc", "web-utils", "analysis", "http-kit", "phputils"] {
+            assert!(pkgs.contains(expected), "missing package '{expected}' in {pkgs:?}");
+        }
     }
 }

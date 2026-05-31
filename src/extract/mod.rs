@@ -182,6 +182,17 @@ pub struct DocMeta {
     /// Doxygen group name set by `@defgroup`/`@addtogroup`/`@{`/`@}` fences
     /// or an explicit `@ingroup groupname` tag.
     pub group: Option<String>,
+    /// Package name and version read from the nearest project manifest
+    /// (`Cargo.toml`, `package.json`, `freight.toml`, `pyproject.toml`, …).
+    /// `None` when no manifest was found above the source file.
+    pub package: Option<PackageId>,
+}
+
+/// Identifies the package that owns a source file.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PackageId {
+    pub name: String,
+    pub version: String,
 }
 
 /// A single documented symbol extracted from source code.
@@ -665,8 +676,22 @@ pub(crate) fn extract_file_heuristic(path: &Path) -> Vec<DocItem> {
 
 pub fn extract_dir(dir: &Path) -> DocSet {
     let registry = ExtractorRegistry::default();
-    let items = walk_and_extract(dir, &mut |path| registry.extract_file(path));
+    let items = walk_and_extract(dir, &mut |path| {
+        let mut items = registry.extract_file(path);
+        stamp_package(&mut items, path);
+        items
+    });
     dedup(items, dir)
+}
+
+/// Attach the nearest package manifest info to every item extracted from `path`.
+fn stamp_package(items: &mut Vec<DocItem>, path: &Path) {
+    if items.is_empty() { return; }
+    if let Some(pkg) = crate::project::package_for_file(path) {
+        for item in items.iter_mut() {
+            item.meta.package = Some(pkg.clone());
+        }
+    }
 }
 
 /// Like [`extract_dir`] but accepts additional [`DocExtractor`] implementations

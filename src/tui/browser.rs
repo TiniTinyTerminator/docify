@@ -3108,8 +3108,10 @@ fn push_tree_rows(
     }
 }
 
-fn item_sort_key(item: &DocItem) -> (u8, String, u8, String) {
+fn item_sort_key(item: &DocItem) -> (String, u8, String, u8, String) {
+    let pkg = package_label(item).unwrap_or_default().to_ascii_lowercase();
     (
+        pkg,
         language_order(&item.lang),
         tree_path(item).join("\u{1f}").to_ascii_lowercase(),
         kind_order(&item.kind),
@@ -3155,8 +3157,23 @@ fn kind_order(kind: &DocKind) -> u8 {
     }
 }
 
+fn package_label(item: &DocItem) -> Option<String> {
+    item.meta.package.as_ref().map(|p| {
+        if p.version.is_empty() || p.version == "0.0.0" {
+            p.name.clone()
+        } else {
+            format!("{}  {}", p.name, p.version)
+        }
+    })
+}
+
 fn tree_path(item: &DocItem) -> Vec<String> {
-    let mut path = vec![language_group_label(&item.lang).to_string()];
+    let lang = language_group_label(&item.lang).to_string();
+    let mut path = if let Some(pkg) = package_label(item) {
+        vec![pkg, lang]
+    } else {
+        vec![lang]
+    };
     path.extend(item_group_parts(item));
     path
 }

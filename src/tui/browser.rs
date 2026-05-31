@@ -383,14 +383,11 @@ impl App {
     }
 
     fn next_focused_tab(&mut self) {
-        match self.focus {
-            FocusPane::Tree => {}
-            FocusPane::Detail => self.toggle_source(),
-        }
+        self.toggle_source();
     }
 
     fn previous_focused_tab(&mut self) {
-        self.next_focused_tab();
+        self.toggle_source();
     }
 
     fn reset_source_state(&mut self) {
@@ -507,38 +504,22 @@ impl App {
     }
 
     fn page_focused_up(&mut self) {
-        match self.focus {
-            FocusPane::Tree => {
-                let amount = self.visible_tree_rows();
-                self.list_scroll = self.list_scroll.saturating_sub(amount);
-            }
-            FocusPane::Detail => {
-                if self.overload_count() > 1 {
-                    self.previous_overload();
-                } else if self.show_source && self.source_variant_count() > 1 {
-                    self.previous_source_variant();
-                } else {
-                    self.scroll = self.scroll.saturating_sub(5);
-                }
-            }
+        if self.overload_count() > 1 {
+            self.previous_overload();
+        } else if self.show_source && self.source_variant_count() > 1 {
+            self.previous_source_variant();
+        } else {
+            self.scroll = self.scroll.saturating_sub(5);
         }
     }
 
     fn page_focused_down(&mut self) {
-        match self.focus {
-            FocusPane::Tree => {
-                self.list_scroll = self.list_scroll.saturating_add(self.visible_tree_rows());
-                self.clamp_list_scroll();
-            }
-            FocusPane::Detail => {
-                if self.overload_count() > 1 {
-                    self.next_overload();
-                } else if self.show_source && self.source_variant_count() > 1 {
-                    self.next_source_variant();
-                } else {
-                    self.scroll = self.scroll.saturating_add(5);
-                }
-            }
+        if self.overload_count() > 1 {
+            self.next_overload();
+        } else if self.show_source && self.source_variant_count() > 1 {
+            self.next_source_variant();
+        } else {
+            self.scroll = self.scroll.saturating_add(5);
         }
     }
 
@@ -3400,9 +3381,12 @@ mod tests {
         app.previous_focused_tab();
         assert!(!app.show_source);
 
+        // Tab now toggles the detail pane even when the tree is focused.
         app.focus_left();
         assert_eq!(app.focus, FocusPane::Tree);
         app.next_focused_tab();
+        assert!(app.show_source);
+        app.previous_focused_tab();
         assert!(!app.show_source);
     }
 

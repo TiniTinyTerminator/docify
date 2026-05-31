@@ -1,0 +1,10 @@
+[package]
+name        = "native-math"
+version     = "0.5.0"
+description = "High-performance math primitives for C++17"
+
+[language.cpp]
+std = "c++17"
+
+[[lib]]
+name = "native-math"

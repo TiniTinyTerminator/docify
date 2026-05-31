@@ -1,0 +1,10 @@
+[project]
+name = "analysis"
+version = "2.1.0"
+description = "Data wrangling and analysis toolkit"
+requires-python = ">=3.11"
+dependencies = []
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

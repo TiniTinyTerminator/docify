@@ -1268,19 +1268,86 @@ fn selected_language(app: &App) -> DocLanguage {
 }
 
 fn tui_kind_label(kind: &DocKind, lang: &DocLanguage) -> &'static str {
-    match kind {
-        DocKind::Function | DocKind::Subroutine => match lang {
-            DocLanguage::Rust                                          => "fn",
-            DocLanguage::Go | DocLanguage::Swift                      => "func",
+    match (kind, lang) {
+        // ── Functions ─────────────────────────────────────────────────────────
+        (DocKind::Function | DocKind::Subroutine, DocLanguage::Rust | DocLanguage::Haskell)
+            => "fn",
+        (DocKind::Function | DocKind::Subroutine, DocLanguage::Go | DocLanguage::Swift)
+            => "func",
+        (DocKind::Function | DocKind::Subroutine, DocLanguage::Kotlin)
+            => "fun",
+        (DocKind::Function | DocKind::Subroutine,
             DocLanguage::TypeScript | DocLanguage::JavaScript
-            | DocLanguage::Php | DocLanguage::Lua | DocLanguage::R    => "function",
-            DocLanguage::Python | DocLanguage::Ruby                   => "def",
-            DocLanguage::Haskell                                      => "fn",
-            DocLanguage::Kotlin                                       => "fun",
-            // C, C++, Java, Fortran, D, Ada, Zig, CSharp — keep "func"
-            _                                                         => "func",
-        },
-        _ => kind.label(),
+            | DocLanguage::Php | DocLanguage::Lua | DocLanguage::R)
+            => "function",
+        (DocKind::Function | DocKind::Subroutine, DocLanguage::Python | DocLanguage::Ruby)
+            => "def",
+        (DocKind::Function, DocLanguage::Fortran)  => "function",
+        (DocKind::Subroutine, DocLanguage::Fortran) => "subroutine",
+        (DocKind::Subroutine, DocLanguage::Ada)    => "procedure",
+        (DocKind::Subroutine, _)                   => "func",
+        (DocKind::Function, _)                     => "func",
+
+        // ── Structs / Classes ─────────────────────────────────────────────────
+        (DocKind::Struct,
+            DocLanguage::C | DocLanguage::Cpp | DocLanguage::Rust | DocLanguage::Go
+            | DocLanguage::CSharp | DocLanguage::Swift | DocLanguage::D | DocLanguage::Zig)
+            => "struct",
+        (DocKind::Struct, DocLanguage::Haskell)    => "data",
+        (DocKind::Struct, DocLanguage::Php)        => "trait",   // PHP Struct → trait by convention
+        (DocKind::Struct, _)                       => "class",
+
+        (DocKind::Class, DocLanguage::Go)          => "struct",  // Go has no class
+        (DocKind::Class, DocLanguage::Rust)        => "struct",  // Rust has no class
+        (DocKind::Class, DocLanguage::Haskell)     => "data",
+        (DocKind::Class, _)                        => "class",
+
+        // ── Interfaces / Traits ───────────────────────────────────────────────
+        (DocKind::Interface, DocLanguage::Rust)    => "trait",
+        (DocKind::Interface, DocLanguage::Go | DocLanguage::TypeScript
+            | DocLanguage::JavaScript | DocLanguage::Kotlin | DocLanguage::Php)
+            => "interface",
+        (DocKind::Interface, DocLanguage::Swift)   => "protocol",
+        (DocKind::Interface, DocLanguage::Haskell) => "class",   // type class
+        (DocKind::Interface, DocLanguage::Python)  => "Protocol",
+        (DocKind::Interface, DocLanguage::Java | DocLanguage::CSharp)
+            => "interface",
+        (DocKind::Interface, _)                    => "iface",
+
+        // ── Enums ────────────────────────────────────────────────────���────────
+        (DocKind::Enum, DocLanguage::Haskell)      => "data",    // sum type
+        (DocKind::Enum, _)                         => "enum",
+
+        // ── Type aliases ──────────────────────────────────────────────────────
+        (DocKind::Typedef, _)                      => "type",
+
+        // ── Modules / Namespaces ──────────────────────────────────────────────
+        (DocKind::Module, DocLanguage::Rust)       => "mod",
+        (DocKind::Module, DocLanguage::Go | DocLanguage::Java | DocLanguage::Kotlin)
+            => "package",
+        (DocKind::Module, DocLanguage::TypeScript | DocLanguage::JavaScript | DocLanguage::CSharp)
+            => "namespace",
+        (DocKind::Module, DocLanguage::Python | DocLanguage::Haskell)
+            => "module",
+        (DocKind::Module, DocLanguage::Ruby | DocLanguage::Lua)
+            => "module",
+        (DocKind::Module, DocLanguage::Php)        => "namespace",
+        (DocKind::Module, DocLanguage::Fortran)    => "module",
+        (DocKind::Module, _)                       => "mod",
+
+        // ── Variables / Constants ─────────────────────────────────────────────
+        (DocKind::Variable, DocLanguage::Rust)     => "const",
+        (DocKind::Variable, DocLanguage::TypeScript | DocLanguage::JavaScript)
+            => "const",
+        (DocKind::Variable, DocLanguage::Go)       => "var",
+        (DocKind::Variable, DocLanguage::Haskell)  => "val",
+        (DocKind::Variable, _)                     => "var",
+
+        // ── Macros ────────────────────────────────────────────────────────────
+        (DocKind::Macro, DocLanguage::Rust)        => "macro",
+        (DocKind::Macro, _)                        => "macro",
+
+        (DocKind::Unknown, _)                      => "item",
     }
 }
 

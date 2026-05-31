@@ -113,6 +113,20 @@ enum Cmd {
         dirs: Vec<PathBuf>,
     },
 
+    /// Serialize the full docset to msgpack (for registry upload)
+    Dump {
+        /// Source directories to scan (default: current directory)
+        #[arg(value_name = "DIR")]
+        dirs: Vec<PathBuf>,
+
+        /// Output file path (default: stdout as binary)
+        #[arg(short, long, value_name = "FILE")]
+        out: Option<PathBuf>,
+
+        #[command(flatten)]
+        cache: CacheInput,
+    },
+
     /// Manage precompiled docsets in the docify cache
     Cache {
         #[command(subcommand)]
@@ -174,6 +188,7 @@ fn main() {
         Cmd::Search { query, cache, dirs } => cmd_search(&query, dirs, cache),
         Cmd::Outline { cache, dirs } => cmd_outline(dirs, cache),
         Cmd::Browse { cache, dirs } => cmd_browse(dirs, cache),
+        Cmd::Dump { dirs, out, cache } => cmd_dump(dirs, out, cache),
         Cmd::Cache { command } => cmd_cache(command),
     }
 }
@@ -236,6 +251,35 @@ fn cmd_gen(raw_dirs: Vec<PathBuf>, out: PathBuf, dry_run: bool) {
         std::process::exit(1);
     }
     println!("✓ {total} items → {}", out.join("index.md").display());
+}
+
+// ── dump ──────────────────────────────────────────────────────────────────────
+
+fn cmd_dump(raw_dirs: Vec<PathBuf>, out: Option<PathBuf>, cache: CacheInput) {
+    let items = collect_items_with_cache(raw_dirs, &cache);
+    if items.is_empty() {
+        eprintln!("warning: no documented items found");
+    }
+    let bytes = match rmp_serde::to_vec_named(&items) {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("error: msgpack serialization failed: {e}");
+            std::process::exit(1);
+        }
+    };
+    match out {
+        Some(path) => {
+            if let Err(e) = std::fs::write(&path, &bytes) {
+                eprintln!("error: could not write {}: {e}", path.display());
+                std::process::exit(1);
+            }
+            eprintln!("✓ {} items → {} ({} bytes)", items.len(), path.display(), bytes.len());
+        }
+        None => {
+            use std::io::Write;
+            std::io::stdout().write_all(&bytes).unwrap();
+        }
+    }
 }
 
 // ── get ───────────────────────────────────────────────────────────────────────

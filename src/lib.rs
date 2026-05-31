@@ -27,6 +27,16 @@ pub fn render(set: &DocSet, out_dir: &Path) -> std::io::Result<()> {
     render_md::render_markdown(set, out_dir)
 }
 
+/// Serialize a slice of `DocItem`s to a msgpack byte vector.
+pub fn to_msgpack(items: &[DocItem]) -> Result<Vec<u8>, rmp_serde::encode::Error> {
+    rmp_serde::to_vec_named(items)
+}
+
+/// Deserialize a msgpack byte slice into a `Vec<DocItem>`.
+pub fn from_msgpack(bytes: &[u8]) -> Result<Vec<DocItem>, rmp_serde::decode::Error> {
+    rmp_serde::from_slice(bytes)
+}
+
 /// Resolve `@see` / `\see` / "See also" references in `item` to their target
 /// [`DocItem`]s within `set`.
 ///

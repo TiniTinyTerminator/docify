@@ -5,23 +5,32 @@ TUI documentation browser.
 
 ## Libraries
 
-| Dep | Language | Purpose |
-|-----|----------|---------|
-| `mathlib` | C17 | Numerical methods (bisection, quadrature, LU) |
-| `stats` | C++17 | Descriptive statistics and regression |
-| `linalg` | Fortran 2018 | Dense linear algebra (dev-dependency) |
+| Dep | Language | Doc style | Purpose |
+|-----|----------|-----------|---------|
+| `mathlib` | C17 | Doxygen `/** */` | Numerical methods (bisection, quadrature, LU) |
+| `stats` | C++17 | Doxygen `/** */` / `///` | Descriptive statistics and regression |
+| `linalg` | Fortran 2018 | FORD `!>` / `!!` | Dense linear algebra (dev-dependency) |
+| `signals` | Python + R | Docstrings / Roxygen2 `#'` | Signal processing utilities |
+| `geometry` | TypeScript | JSDoc `/** */` | 2-D / 3-D geometry primitives |
+| `csvkit` | C# | XML doc `///` | CSV reader / writer |
+| `formatter` | Ruby | YARD `# ` blocks | Text formatting and table rendering |
+| `scripting` | Lua + Haskell | LuaDoc `---` / Haddock `-- \|` | Vector math, pure statistics |
 
 ## Rendered doc features
 
-This example exercises every doc-comment feature:
+This example exercises every doc-comment feature across 10 languages:
 
-- **Doxygen** `@brief` / `@param` / `@return` / `@see` / `@warning` tags
+- **Doxygen** `@brief` / `@param` / `@return` / `@see` / `@warning` tags (C, C++)
 - **FORD** `!>` and `!!` Fortran inline comments
+- **Python** Google-style docstrings with `Args:` / `Returns:` / `Raises:` sections
+- **JSDoc** `@param` / `@returns` / `@see` (TypeScript)
+- **XML doc** `<summary>` / `<param>` / `<returns>` / `<exception>` (C#)
+- **YARD** `@param [Type]` / `@return` / `@see` (Ruby)
+- **LuaDoc** `---` blocks with `@param` / `@return`, EmmyLua `---@` style (Lua)
+- **Roxygen2** `#'` blocks with `@param` / `@return` / `@seealso` (R)
+- **Haddock** `-- |` and `{- | -}` blocks (Haskell)
 - Inline math: $f(x) = e^{-x^2}$
-- Display math:
-
-$$\int_{-\infty}^{\infty} e^{-x^2}\,dx = \sqrt{\pi}$$
-
+- Display math: $$\int_{-\infty}^{\infty} e^{-x^2}\,dx = \sqrt{\pi}$$
 - Markdown tables *inside* doc-comment bodies
 - Cross-reference links (`@see bisect` → navigable link to `bisect`)
 

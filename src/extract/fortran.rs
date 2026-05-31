@@ -53,7 +53,7 @@ pub(super) fn extract_fortran(src: &str, file: &Path) -> Vec<DocItem> {
                 name,
                 kind,
                 file,
-                i + 1,
+                end + 2,
                 DocLanguage::Fortran,
                 sym.to_string(),
             );

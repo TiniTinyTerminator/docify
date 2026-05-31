@@ -3152,9 +3152,16 @@ fn tree_path(item: &DocItem) -> Vec<String> {
         return vec![lang, SEC_NAMESPACES.to_string(), item.name.clone()];
     }
 
-    // Non-type with a known parent type → lang → "Classes & Types" → parent.
-    if let Some(parent) = item.meta.parent.as_deref().filter(|p| !p.is_empty()) {
-        return vec![lang, SEC_CLASSES.to_string(), parent.to_string()];
+    // Non-type with a known parent type → lang → "Classes & Types" → full qualified prefix.
+    // Use item.name prefix (not meta.parent which is just the simple name) so the group
+    // key matches the class item's own tree_path entry.
+    if item.meta.parent.as_deref().filter(|p| !p.is_empty()).is_some() {
+        let sep = if item.name.contains("::") { "::" } else { "." };
+        if let Some((prefix, _)) = item.name.rsplit_once(sep) {
+            if !prefix.is_empty() {
+                return vec![lang, SEC_CLASSES.to_string(), prefix.to_string()];
+            }
+        }
     }
 
     // Non-type with a scoped name — put it under lang → "Namespaces" → prefix.

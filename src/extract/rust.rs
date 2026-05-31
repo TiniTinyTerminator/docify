@@ -1,5 +1,5 @@
 use super::common::{
-    build_item, collect_c_block, collect_line_block, first_ident, item_has_content, next_non_blank,
+    build_item, collect_c_block, collect_line_block, first_ident, item_has_content,
 };
 
 /// Like `next_non_blank` but also skips `#[...]` attribute lines so that

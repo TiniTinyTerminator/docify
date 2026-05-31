@@ -127,6 +127,8 @@ struct App {
     expanded: HashSet<String>,
     list_state: ListState,
     list_scroll: usize,
+    /// Package labels whose items all share one language — language node omitted.
+    single_lang_pkgs: HashSet<String>,
 
     scroll: u16,
     show_source: bool,
@@ -161,6 +163,7 @@ impl App {
             expanded: HashSet::new(),
             list_state: ListState::default(),
             list_scroll: 0,
+            single_lang_pkgs: HashSet::new(),
             scroll: 0,
             show_source: false,
             source_cache: None,
@@ -228,13 +231,33 @@ impl App {
     }
 
     fn rebuild_rows(&mut self) {
+        // Compute which packages use only a single language so the language
+        // node can be omitted from those sub-trees.
+        self.single_lang_pkgs = {
+            use std::collections::HashMap;
+            let mut pkg_langs: HashMap<String, HashSet<String>> = HashMap::new();
+            for &idx in &self.matching {
+                let item = &self.all[idx];
+                if let Some(label) = package_label(item) {
+                    pkg_langs.entry(label)
+                        .or_default()
+                        .insert(item.lang.label().to_string());
+                }
+            }
+            pkg_langs.into_iter()
+                .filter(|(_, langs)| langs.len() == 1)
+                .map(|(pkg, _)| pkg)
+                .collect()
+        };
+
+        let single = &self.single_lang_pkgs;
         let mut root = TreeNode::default();
         for &idx in &self.matching {
             if !is_index_item(&self.all[idx]) {
                 continue;
             }
             root.insert(
-                &tree_path(&self.all[idx]),
+                &tree_path(&self.all[idx], single),
                 idx,
                 is_group_doc_item(&self.all[idx]),
                 true,
@@ -244,7 +267,7 @@ impl App {
             if is_index_item(&self.all[idx]) {
                 continue;
             }
-            root.attach_source(&tree_path(&self.all[idx]), idx);
+            root.attach_source(&tree_path(&self.all[idx], single), idx);
         }
 
         let mut rows = Vec::new();
@@ -346,7 +369,7 @@ impl App {
         }
 
         let mut key = String::new();
-        for part in tree_path(&self.all[idx]) {
+        for part in tree_path(&self.all[idx], &self.single_lang_pkgs) {
             if key.is_empty() {
                 key = part;
             } else {
@@ -870,7 +893,7 @@ fn render_list(f: &mut Frame, app: &mut App, area: Rect) {
                     let marker = if expanded { "▾" } else { "▸" };
                     let label_style = group_label_style(item_idx.and_then(|idx| app.all.get(idx)));
                     if let Some(idx) = item_idx {
-                        let kind = tui_kind_label(&app.all[idx].kind);
+                        let kind = tui_kind_label(&app.all[idx].kind, &app.all[idx].lang);
                         let indent_width = indent.chars().count() + 2;
                         let count = format!("  {}", row.count);
                         let available = row_width.saturating_sub(indent_width);
@@ -905,7 +928,7 @@ fn render_list(f: &mut Frame, app: &mut App, area: Rect) {
                 }
                 TreeRowKind::Item(idx) => {
                     let item = &app.all[idx];
-                    let kind = tui_kind_label(&item.kind);
+                    let kind = tui_kind_label(&item.kind, &item.lang);
                     let indent_width = indent.chars().count() + 2;
                     let available = row_width.saturating_sub(indent_width);
                     let kind_width = kind.chars().count();
@@ -1244,9 +1267,19 @@ fn selected_language(app: &App) -> DocLanguage {
         .unwrap_or(DocLanguage::Unknown)
 }
 
-fn tui_kind_label(kind: &DocKind) -> &'static str {
+fn tui_kind_label(kind: &DocKind, lang: &DocLanguage) -> &'static str {
     match kind {
-        DocKind::Function => "func",
+        DocKind::Function | DocKind::Subroutine => match lang {
+            DocLanguage::Rust                                          => "fn",
+            DocLanguage::Go | DocLanguage::Swift                      => "func",
+            DocLanguage::TypeScript | DocLanguage::JavaScript
+            | DocLanguage::Php | DocLanguage::Lua | DocLanguage::R    => "function",
+            DocLanguage::Python | DocLanguage::Ruby                   => "def",
+            DocLanguage::Haskell                                      => "fn",
+            DocLanguage::Kotlin                                       => "fun",
+            // C, C++, Java, Fortran, D, Ada, Zig, CSharp — keep "func"
+            _                                                         => "func",
+        },
         _ => kind.label(),
     }
 }
@@ -1256,7 +1289,7 @@ fn push_item_header_lines(lines: &mut Vec<Line<'static>>, item: &DocItem, width:
         .fg(kind_color(&item.kind))
         .add_modifier(Modifier::BOLD);
     let mut spans = vec![Span::styled(
-        format!("[{}] ", tui_kind_label(&item.kind)),
+        format!("[{}] ", tui_kind_label(&item.kind, &item.lang)),
         kind_style,
     )];
     spans.extend(qualified_name_spans(item));
@@ -1619,7 +1652,7 @@ fn member_display_text(member: &DocItem) -> String {
         member.display_signature()
     };
     if matches!(member.kind, DocKind::Macro | DocKind::Unknown) {
-        format!("{} {text}", tui_kind_label(&member.kind))
+        format!("{} {text}", tui_kind_label(&member.kind, &member.lang))
     } else {
         text
     }
@@ -3113,7 +3146,7 @@ fn item_sort_key(item: &DocItem) -> (String, u8, String, u8, String) {
     (
         pkg,
         language_order(&item.lang),
-        tree_path(item).join("\u{1f}").to_ascii_lowercase(),
+        tree_sort_path(item).join("\u{1f}").to_ascii_lowercase(),
         kind_order(&item.kind),
         item.name.to_ascii_lowercase(),
     )
@@ -3167,7 +3200,25 @@ fn package_label(item: &DocItem) -> Option<String> {
     })
 }
 
-fn tree_path(item: &DocItem) -> Vec<String> {
+/// Build the tree path for an item.
+///
+/// `single_lang_pkgs` is the set of package labels that contain only one
+/// language — the language node is omitted for those packages so the tree
+/// goes straight from package → Doxygen section.
+fn tree_path(item: &DocItem, single_lang_pkgs: &HashSet<String>) -> Vec<String> {
+    let lang = language_group_label(&item.lang).to_string();
+    let mut path = match package_label(item) {
+        Some(pkg) if single_lang_pkgs.contains(&pkg) => vec![pkg],
+        Some(pkg) => vec![pkg, lang],
+        None => vec![lang],
+    };
+    path.extend(item_group_parts(item));
+    path
+}
+
+/// Stable sort key — always includes language so ordering is consistent
+/// regardless of whether the language node is displayed.
+fn tree_sort_path(item: &DocItem) -> Vec<String> {
     let lang = language_group_label(&item.lang).to_string();
     let mut path = if let Some(pkg) = package_label(item) {
         vec![pkg, lang]

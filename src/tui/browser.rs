@@ -3054,8 +3054,23 @@ fn push_tree_rows(
     }
 }
 
-fn item_sort_key(item: &DocItem) -> (u8, String, u8, String) {
+fn section_order(item: &DocItem) -> u8 {
+    if is_type_kind(&item.kind) {
+        0 // Classes & Types first
+    } else if matches!(item.kind, DocKind::Module) {
+        1 // Namespaces second
+    } else if item.meta.parent.as_deref().filter(|p| !p.is_empty()).is_some()
+        || item.name.contains("::") || item.name.contains('.')
+    {
+        1 // Scoped items → Namespaces section
+    } else {
+        2 // Free Symbols last
+    }
+}
+
+fn item_sort_key(item: &DocItem) -> (u8, u8, String, u8, String) {
     (
+        section_order(item),
         language_order(&item.lang),
         tree_path(item).join("\u{1f}").to_ascii_lowercase(),
         kind_order(&item.kind),
@@ -3092,18 +3107,68 @@ fn kind_order(kind: &DocKind) -> u8 {
     }
 }
 
+// ── Doxygen-style index layout ────────────────────────────────────────────────
+//
+// Top-level sections (mirroring Doxygen's sidebar):
+//   "Classes & Types"  — every class/struct/enum/typedef/interface
+//   "Namespaces"       — scoped non-type items, grouped by namespace prefix
+//   "Free Symbols"     — top-level non-type items (no namespace)
+//
+// Members of a type (e.g. MyClass::method) are placed as children of their
+// parent type's node in "Classes & Types", using meta.parent when available.
+
+const SEC_CLASSES: &str = "Classes & Types";
+const SEC_NAMESPACES: &str = "Namespaces";
+const SEC_FREE: &str = "Free Symbols";
+
+fn is_type_kind(kind: &DocKind) -> bool {
+    matches!(
+        kind,
+        DocKind::Class | DocKind::Struct | DocKind::Interface | DocKind::Enum | DocKind::Typedef
+    )
+}
+
 fn tree_path(item: &DocItem) -> Vec<String> {
-    let mut path = vec![language_group_label(&item.lang).to_string()];
-    path.extend(item_group_parts(item));
-    path
+    if item.name.is_empty() {
+        return vec![SEC_FREE.to_string()];
+    }
+
+    // Types — become group nodes directly under "Classes & Types".
+    if is_type_kind(&item.kind) {
+        let mut path = vec![SEC_CLASSES.to_string()];
+        path.push(item.name.clone());
+        return path;
+    }
+
+    // Module/namespace nodes — under "Namespaces".
+    if matches!(item.kind, DocKind::Module) {
+        let mut path = vec![SEC_NAMESPACES.to_string()];
+        path.push(item.name.clone());
+        return path;
+    }
+
+    // Non-type with a known parent type → "Classes & Types" → parent.
+    if let Some(parent) = item.meta.parent.as_deref().filter(|p| !p.is_empty()) {
+        return vec![SEC_CLASSES.to_string(), parent.to_string()];
+    }
+
+    // Non-type with a scoped name (ns::fn or Type::method) — determine the
+    // prefix by stripping the last component.
+    let sep = if item.name.contains("::") { "::" } else { "." };
+    if let Some((prefix, _)) = item.name.rsplit_once(sep) {
+        if !prefix.is_empty() {
+            return vec![SEC_NAMESPACES.to_string(), prefix.to_string()];
+        }
+    }
+
+    // No scope → free symbol.
+    vec![SEC_FREE.to_string()]
 }
 
 fn is_group_doc_item(item: &DocItem) -> bool {
     item.name.is_empty()
-        || matches!(
-            item.kind,
-            DocKind::Class | DocKind::Struct | DocKind::Interface | DocKind::Module
-        )
+        || is_type_kind(&item.kind)
+        || matches!(item.kind, DocKind::Module)
 }
 
 fn is_index_item(item: &DocItem) -> bool {
@@ -3114,115 +3179,6 @@ fn has_doc_content(item: &DocItem) -> bool {
     !item.brief.is_empty() || !item.body.is_empty() || !item.tags.is_empty()
 }
 
-fn is_type_group_doc_item(item: &DocItem) -> bool {
-    matches!(
-        item.kind,
-        DocKind::Class | DocKind::Struct | DocKind::Interface
-    ) && !item.name.is_empty()
-}
-
-fn language_group_label(lang: &DocLanguage) -> &'static str {
-    match lang {
-        DocLanguage::C | DocLanguage::Cpp => "C/C++",
-        _ => lang.label(),
-    }
-}
-
-fn item_group_parts(item: &DocItem) -> Vec<String> {
-    match item.lang {
-        DocLanguage::C | DocLanguage::Cpp => {
-            let mut parts = vec![item
-                .file
-                .file_name()
-                .and_then(|name| name.to_str())
-                .map(str::to_owned)
-                .unwrap_or_else(|| item.file.display().to_string())];
-            if matches!(
-                item.kind,
-                DocKind::Class | DocKind::Struct | DocKind::Interface | DocKind::Module
-            ) && !item.name.is_empty()
-            {
-                parts.extend(split_scope(&item.name));
-            } else {
-                parts.extend(split_scope_prefix(&item.name, "::"));
-            }
-            parts
-        }
-        DocLanguage::Rust => {
-            if is_type_group_doc_item(item) {
-                return split_scope(&item.name);
-            }
-            if matches!(item.kind, DocKind::Module) && !item.name.is_empty() {
-                return split_scope(&item.name);
-            }
-            let parts = split_scope_prefix(&item.name, "::");
-            if parts.is_empty() {
-                vec!["(root)".to_string()]
-            } else {
-                parts
-            }
-        }
-        DocLanguage::Ada | DocLanguage::D | DocLanguage::Go | DocLanguage::Fortran => {
-            if is_type_group_doc_item(item) {
-                return split_scope(&item.name);
-            }
-            let parts = split_scope_prefix(&item.name, ".");
-            if parts.is_empty() {
-                vec!["(root)".to_string()]
-            } else {
-                parts
-            }
-        }
-        DocLanguage::Java | DocLanguage::Kotlin | DocLanguage::Swift | DocLanguage::Zig => {
-            if is_type_group_doc_item(item) {
-                return split_scope(&item.name);
-            }
-            let parent = item
-                .meta
-                .parent
-                .as_deref()
-                .filter(|parent| !parent.is_empty())
-                .map(str::to_owned)
-                .or_else(|| {
-                    item.name
-                        .rsplit_once('.')
-                        .map(|(module, _)| module.to_string())
-                })
-                .or_else(|| {
-                    item.name
-                        .rsplit_once("::")
-                        .map(|(module, _)| module.to_string())
-                });
-            match parent {
-                Some(parent) => split_scope(&parent),
-                None => vec!["(root)".to_string()],
-            }
-        }
-        DocLanguage::Unknown => vec!["(unknown)".to_string()],
-    }
-}
-
-fn split_scope_prefix(name: &str, sep: &str) -> Vec<String> {
-    name.rsplit_once(sep)
-        .map(|(prefix, _)| split_scope(prefix))
-        .unwrap_or_default()
-}
-
-fn split_scope(scope: &str) -> Vec<String> {
-    if scope.contains("::") {
-        scope
-            .split("::")
-            .filter(|part| !part.is_empty())
-            .map(str::to_owned)
-            .collect()
-    } else {
-        scope
-            .split('.')
-            .filter(|part| !part.is_empty())
-            .map(str::to_owned)
-            .collect()
-    }
-}
 
 fn simple_name(name: &str) -> &str {
     name.rsplit_once("::")
@@ -3282,7 +3238,7 @@ mod tests {
     use ratatui::style::{Color, Modifier, Style};
 
     use super::{
-        find_doc_target, item_group_parts, linkable_text_line, overload_indices,
+        find_doc_target, linkable_text_line, overload_indices, tree_path,
         push_doc_text_lines, push_item_header_lines, push_signature_lines,
         source_variants_for_item, type_members, App, FocusPane, TreeNode, TreeRowKind,
     };
@@ -3345,21 +3301,24 @@ mod tests {
         mean.file = "stats.h".into();
         mean.brief = "Arithmetic mean.".into();
         let mut app = App::new_with_visible(vec![namespace, mean], vec![0, 1]);
-        app.expanded.insert("C/C++".into());
-        app.expanded.insert("C/C++\u{1f}stats.h".into());
+        // Expand the Doxygen-style "Namespaces" section and the "stats" group.
+        app.expanded.insert("Namespaces".into());
+        app.expanded.insert("Namespaces\u{1f}stats".into());
         app.rebuild_rows();
 
-        let namespace = app
+        let namespace_row = app
             .rows
             .iter()
             .find(|row| row.label == "stats")
             .expect("namespace group should exist");
+        // The undocumented namespace item (idx=0) should not appear as its own
+        // visible row — it attaches as source_idx of the group node.
         assert!(!app.rows.iter().any(|row| match row.kind {
             TreeRowKind::Item(idx) => idx == 0,
             TreeRowKind::Group { item_idx, .. } => item_idx == Some(0),
         }));
         assert!(matches!(
-            namespace.kind,
+            namespace_row.kind,
             TreeRowKind::Group {
                 source_idx: Some(0),
                 ..
@@ -3391,17 +3350,35 @@ mod tests {
     }
 
     #[test]
-    fn rust_struct_doc_routes_to_own_type_group() {
+    fn rust_struct_routes_to_classes_section() {
         let item = item("Builder", DocKind::Struct, DocLanguage::Rust);
-        assert_eq!(item_group_parts(&item), vec!["Builder".to_string()]);
+        assert_eq!(
+            tree_path(&item),
+            vec!["Classes & Types".to_string(), "Builder".to_string()]
+        );
     }
 
     #[test]
-    fn java_class_doc_routes_to_own_type_group() {
+    fn java_class_routes_to_classes_section() {
         let item = item("collections.IntStack", DocKind::Class, DocLanguage::Java);
         assert_eq!(
-            item_group_parts(&item),
-            vec!["collections".to_string(), "IntStack".to_string()]
+            tree_path(&item),
+            vec!["Classes & Types".to_string(), "collections.IntStack".to_string()]
+        );
+    }
+
+    #[test]
+    fn free_function_routes_to_free_symbols() {
+        let item = item("compute", DocKind::Function, DocLanguage::Rust);
+        assert_eq!(tree_path(&item), vec!["Free Symbols".to_string()]);
+    }
+
+    #[test]
+    fn namespaced_function_routes_to_namespaces() {
+        let item = item("math::dot", DocKind::Function, DocLanguage::Cpp);
+        assert_eq!(
+            tree_path(&item),
+            vec!["Namespaces".to_string(), "math".to_string()]
         );
     }
 

@@ -753,7 +753,11 @@ fn dedup(items: Vec<DocItem>, source_root: &Path) -> DocSet {
                 let prev = deduped[idx].tags.len() * 10
                     + deduped[idx].brief.len()
                     + deduped[idx].body.len();
-                if score > prev {
+                // On a tie, prefer header files over implementation files so that
+                // namespace/class source items point to declarations, not definitions.
+                let prefer_over_existing = score > prev
+                    || (score == prev && is_header_file(&item.file) && !is_header_file(&deduped[idx].file));
+                if prefer_over_existing {
                     deduped[idx] = item;
                 }
             }
@@ -767,6 +771,13 @@ fn dedup(items: Vec<DocItem>, source_root: &Path) -> DocSet {
         items: deduped,
         source_root: source_root.to_path_buf(),
     }
+}
+
+fn is_header_file(path: &std::path::Path) -> bool {
+    matches!(
+        path.extension().and_then(|e| e.to_str()),
+        Some("h" | "hpp" | "hh" | "hxx" | "h++")
+    )
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────

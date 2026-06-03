@@ -20,7 +20,9 @@ impl DocExtractor for CExtractor {
 impl DocExtractor for CppExtractor {
     fn extensions(&self) -> &[&str] {
         &[
-            "cpp", "cc", "cxx", "c++", "hpp", "hh", "hxx", "cu", "cuh", "hip", "sycl", "ispc",
+            "cpp", "cc", "cxx", "c++", "hpp", "hh", "hxx",
+            "cppm", "ixx", "mpp",           // C++20 module interfaces
+            "cu", "cuh", "hip", "sycl", "ispc",
         ]
     }
     fn extract(&self, path: &Path, src: &str) -> Vec<DocItem> {
@@ -38,6 +40,9 @@ pub(super) fn extract_c_style(src: &str, file: &Path, lang: &DocLanguage) -> Vec
     let mut pending_ns: Option<String> = None;
     let mut class_stack: Vec<(usize, String)> = Vec::new();
     let mut pending_class: Option<String> = None;
+
+    // C++20 module unit declared by `export module name;` or `export module name:part;`
+    let mut module_unit: Option<String> = None;
 
     // Doxygen group tracking: @defgroup/@addtogroup/@{/@}
     let mut group_stack: Vec<String> = Vec::new();
@@ -129,7 +134,30 @@ pub(super) fn extract_c_style(src: &str, file: &Path, lang: &DocLanguage) -> Vec
         }
 
         if !t.starts_with("//") && !t.starts_with("/*") && !t.starts_with('*') {
-            if let Some(rest) = t.strip_prefix("namespace") {
+            // C++20 module unit declaration (not preceded by a doc block).
+            // `export module name;` or `export module name:partition;`
+            // "export" is a qualifier, so strip_c_qualifiers converts it to `module ...`.
+            {
+                let stripped = strip_c_qualifiers(t);
+                if let Some(rest) = stripped.strip_prefix("module ") {
+                    let raw = rest.trim_end_matches(';').trim();
+                    if !raw.is_empty() && !raw.starts_with(':') {
+                        let name = raw.replace(':', ".");
+                        module_unit = Some(name.clone());
+                        push_namespace_source_item(&mut items, &name, file, i + 1, lang.clone(), t);
+                        i += 1;
+                        continue;
+                    }
+                }
+            }
+
+            // Match `namespace foo` or `export namespace foo`
+            let ns_rest = t.strip_prefix("namespace").or_else(|| {
+                t.strip_prefix("export ")
+                    .map(str::trim_start)
+                    .and_then(|r| r.strip_prefix("namespace"))
+            });
+            if let Some(rest) = ns_rest {
                 let rest_ok =
                     rest.is_empty() || rest.starts_with(|c: char| c.is_whitespace() || c == '{');
                 if rest_ok {
@@ -213,6 +241,22 @@ pub(super) fn extract_c_style(src: &str, file: &Path, lang: &DocLanguage) -> Vec
 
         i += 1;
     }
+
+    // Tag every item from a module partition with "cxx-module:lm.vec" so the
+    // TUI can group them under the partition node rather than the flat namespace.
+    if let Some(mu) = &module_unit {
+        if mu.contains('.') {
+            let attr = format!("cxx-module:{mu}");
+            for item in items.iter_mut() {
+                // Don't retag the module declaration item itself.
+                if matches!(item.kind, DocKind::Module) && item.name == *mu {
+                    continue;
+                }
+                item.meta.attrs.push(attr.clone());
+            }
+        }
+    }
+
     items
 }
 
@@ -233,6 +277,16 @@ pub(crate) fn detect_c_symbol(line: &str) -> (String, DocKind) {
     }
     if let Some(r) = t.strip_prefix("namespace ") {
         return (first_ident(r), DocKind::Module);
+    }
+    // C++20: `export module name;` or `export module name:partition;`
+    // "export" is already stripped by strip_c_qualifiers.
+    if let Some(r) = t.strip_prefix("module ") {
+        let raw = r.trim_end_matches(';').trim();
+        // Skip private-fragment marker (`module :private;`)
+        if !raw.is_empty() && !raw.starts_with(':') {
+            let name = raw.replace(':', ".");
+            return (name, DocKind::Module);
+        }
     }
     if let Some(r) = t.strip_prefix("#define ") {
         return (first_ident(r), DocKind::Macro);

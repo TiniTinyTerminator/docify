@@ -54,7 +54,7 @@ pub(super) fn extract_go(src: &str, file: &Path) -> Vec<DocItem> {
                     qualified,
                     kind,
                     file,
-                    i + 1,
+                    end + 2,
                     DocLanguage::Go,
                     sym.to_string(),
                 );

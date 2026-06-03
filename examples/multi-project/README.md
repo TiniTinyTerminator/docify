@@ -22,21 +22,6 @@ project-boundary detection and per-project grouping.
 cargo run -- browse examples/multi-project
 ```
 
-Without project-boundary detection docify shows all ~50 symbols flat
-(grouped only by language).  With project detection each sub-project
-becomes a top-level node in the tree:
-
-```
-web-utils  1.2.0
-  TypeScript
-    Classes & Types — BoundingBox
-    Free Symbols    — parseQuery · parseQueryAll · buildQuery · …
-string-proc  0.3.1
-  Rust
-    Free Symbols    — to_snake · to_camel · slugify · …
-native-math  0.5.0
-  C++
-    Namespaces      — nm
-      …
-…
-```
+Each sub-project becomes a top-level node in the TUI tree, grouped by
+package name.  Symbols are nested under their language and then their
+module / class / file.

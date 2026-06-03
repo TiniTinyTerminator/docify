@@ -15,14 +15,41 @@ fn extract_csharp(src: &str, file: &Path) -> Vec<DocItem> {
     let lines: Vec<&str> = src.lines().collect();
     let mut items = Vec::new();
     let mut i = 0;
+    let mut depth: usize = 0;
+    // (depth_at_open, fully_qualified_name) — namespaces and classes
+    let mut scope_stack: Vec<(usize, String)> = Vec::new();
+    // class/namespace declared but `{` not yet seen (Allman-brace style)
+    let mut pending_scope: Option<String> = None;
+
     while i < lines.len() {
         let t = lines[i].trim();
+        let opens = t.chars().filter(|&c| c == '{').count();
+        let closes = t.chars().filter(|&c| c == '}').count();
+
+        // Process closes first
+        if closes > 0 {
+            let new_depth = depth.saturating_sub(closes);
+            scope_stack.retain(|(d, _)| *d < new_depth);
+            depth = new_depth;
+        }
+
+        // If this line opens braces, commit any pending scope and update depth
+        if opens > 0 {
+            if let Some(name) = pending_scope.take() {
+                scope_stack.push((depth, name));
+            }
+            depth += opens;
+        } else {
+            pending_scope = None;
+        }
+
         if t.starts_with("///") {
             let (raw, end) = collect_xml_doc(&lines, i);
             let block = strip_xml_tags(raw);
             let sym = next_non_attr(&lines, end + 1);
-            let (name, kind) = detect_cs_symbol(sym);
-            if !name.is_empty() {
+            let (raw_name, kind) = detect_cs_symbol(sym);
+            if !raw_name.is_empty() {
+                let name = cs_qualify(&raw_name, &scope_stack);
                 let item = build_item(block, name, kind, file, end + 2,
                     DocLanguage::CSharp, sym.to_string());
                 if item_has_content(&item) { items.push(item); }
@@ -30,9 +57,52 @@ fn extract_csharp(src: &str, file: &Path) -> Vec<DocItem> {
             i = end + 1;
             continue;
         }
+
+        // Track scope-opening declarations (namespace / class / struct / interface)
+        if let Some(decl) = detect_cs_scope_decl(t) {
+            let full = if let Some((_, parent)) = scope_stack.last() {
+                format!("{parent}.{decl}")
+            } else {
+                decl
+            };
+            if opens > 0 {
+                // `{` already handled above; push with the depth *before* the opens
+                scope_stack.push((depth - opens, full));
+            } else {
+                pending_scope = Some(full);
+            }
+        }
+
         i += 1;
     }
     items
+}
+
+/// Qualify `name` with the innermost scope (namespace / class).
+fn cs_qualify(name: &str, scope_stack: &[(usize, String)]) -> String {
+    match scope_stack.last() {
+        Some((_, parent)) => format!("{parent}.{name}"),
+        None => name.to_owned(),
+    }
+}
+
+/// Detect a namespace / class / struct / interface declaration line and return its simple name.
+fn detect_cs_scope_decl(line: &str) -> Option<String> {
+    let keywords = [
+        "public", "private", "protected", "internal", "static",
+        "abstract", "sealed", "partial", "readonly",
+    ];
+    let mut words: Vec<&str> = line.split_whitespace().collect();
+    words.retain(|w| !keywords.contains(w));
+    let clean = words.join(" ");
+    let clean = clean.trim();
+    for kw in ["namespace ", "class ", "struct ", "interface "] {
+        if let Some(rest) = clean.strip_prefix(kw) {
+            let name = first_ident(rest.split(':').next().unwrap_or(rest).split('<').next().unwrap_or(rest));
+            if !name.is_empty() { return Some(name); }
+        }
+    }
+    None
 }
 
 fn collect_xml_doc(lines: &[&str], start: usize) -> (Vec<String>, usize) {
@@ -170,16 +240,23 @@ fn detect_cs_symbol(line: &str) -> (String, DocKind) {
 }
 
 fn detect_cs_member(line: &str) -> String {
-    // Expect "ReturnType Name(" or "ReturnType Name<T>(" or property "RetType Name {"
-    let parts: Vec<&str> = line.split_whitespace().collect();
-    if parts.len() < 2 { return String::new(); }
-    // The member name is the token just before a `(` or `{` or `<`
-    for w in &parts[1..] {
-        let base = w.split(|c| c == '(' || c == '<' || c == '{').next().unwrap_or(w);
-        let base = base.trim_end_matches(';');
-        if !base.is_empty() && base.chars().next().map(|c| c.is_alphanumeric() || c == '_').unwrap_or(false) {
-            if w.contains('(') || w.contains('{') || parts.iter().any(|p| p.contains('(')) {
-                return base.to_string();
+    // Method: the identifier directly before the first `(`
+    if let Some(paren) = line.find('(') {
+        let before = line[..paren].trim_end();
+        if let Some(tok) = before.split_whitespace().last() {
+            let name = tok.split('<').next().unwrap_or(tok).trim_end_matches(';');
+            if !name.is_empty() && name.chars().next().map(|c| c.is_alphanumeric() || c == '_').unwrap_or(false) {
+                return name.to_string();
+            }
+        }
+    }
+    // Property: the identifier directly before the first `{`
+    if let Some(brace) = line.find('{') {
+        let before = line[..brace].trim_end();
+        if let Some(tok) = before.split_whitespace().last() {
+            let name = tok.split('<').next().unwrap_or(tok).trim_end_matches(';');
+            if !name.is_empty() && name.chars().next().map(|c| c.is_alphanumeric() || c == '_').unwrap_or(false) {
+                return name.to_string();
             }
         }
     }

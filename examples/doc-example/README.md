@@ -9,6 +9,7 @@ TUI documentation browser.
 |-----|----------|-----------|---------|
 | `mathlib` | C17 | Doxygen `/** */` | Numerical methods (bisection, quadrature, LU) |
 | `stats` | C++17 | Doxygen `/** */` / `///` | Descriptive statistics and regression |
+| `shapes` | C++17 | Doxygen `/** */` | Virtual base class, overloaded constructors and functions |
 | `linalg` | Fortran 2018 | FORD `!>` / `!!` | Dense linear algebra (dev-dependency) |
 | `signals` | Python + R | Docstrings / Roxygen2 `#'` | Signal processing utilities |
 | `geometry` | TypeScript | JSDoc `/** */` | 2-D / 3-D geometry primitives |
@@ -20,7 +21,7 @@ TUI documentation browser.
 
 This example exercises every doc-comment feature across 10 languages:
 
-- **Doxygen** `@brief` / `@param` / `@return` / `@see` / `@warning` tags (C, C++)
+- **Doxygen** `@brief` / `@param` / `@return` / `@see` / `@warning` tags (C, C++) — including virtual base classes, constructor overloads, and free-function overloads (`shapes`)
 - **FORD** `!>` and `!!` Fortran inline comments
 - **Python** Google-style docstrings with `Args:` / `Returns:` / `Raises:` sections
 - **JSDoc** `@param` / `@returns` / `@see` (TypeScript)

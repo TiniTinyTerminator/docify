@@ -83,9 +83,11 @@ fn detect_lua_symbol(line: &str) -> (String, DocKind) {
     let t = line.trim();
     let t = t.strip_prefix("local ").unwrap_or(t);
 
-    // `function name(` or `function module.name(`
+    // `function name(` or `function module.name(` or `function module:name(`
     if let Some(r) = t.strip_prefix("function ") {
-        let name = r.split('(').next().unwrap_or("").trim().to_string();
+        let raw = r.split('(').next().unwrap_or("").trim();
+        // Normalize Lua's `:` method syntax (Vec:method) to `.` (Vec.method)
+        let name = raw.replace(':', ".");
         return (name, DocKind::Function);
     }
     // `name = function(` or `name = function (` (local or global)

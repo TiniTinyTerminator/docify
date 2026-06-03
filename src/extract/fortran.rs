@@ -17,7 +17,7 @@ pub(super) fn extract_fortran(src: &str, file: &Path) -> Vec<DocItem> {
     let lines: Vec<&str> = src.lines().collect();
     let mut items = Vec::new();
     let mut i = 0;
-    let mut in_module = false;
+    let mut module_name = String::new();
 
     while i < lines.len() {
         let t = lines[i].trim();
@@ -28,9 +28,9 @@ pub(super) fn extract_fortran(src: &str, file: &Path) -> Vec<DocItem> {
             && !up.starts_with("MODULE FUNCTION ")
             && !up.starts_with("MODULE PROCEDURE ")
         {
-            in_module = true;
+            module_name = ci_ident_after(t, "module ").to_ascii_lowercase();
         } else if up.starts_with("END MODULE") || up == "END MODULE" {
-            in_module = false;
+            module_name.clear();
         }
 
         if t.starts_with("!>") {
@@ -38,7 +38,7 @@ pub(super) fn extract_fortran(src: &str, file: &Path) -> Vec<DocItem> {
             let sym = next_non_blank(&lines, end + 1);
             let (name, kind) = detect_fortran_symbol(sym);
 
-            let (name, kind) = if kind == DocKind::Unknown && in_module {
+            let (name, kind) = if kind == DocKind::Unknown && !module_name.is_empty() {
                 if let Some(var_name) = detect_fortran_variable(sym) {
                     (var_name, DocKind::Variable)
                 } else {
@@ -48,9 +48,17 @@ pub(super) fn extract_fortran(src: &str, file: &Path) -> Vec<DocItem> {
                 (name, kind)
             };
 
+            // Qualify items inside a module so the tree groups them correctly,
+            // but don't re-qualify the module declaration itself.
+            let qualified = if !module_name.is_empty() && kind != DocKind::Module && !name.is_empty() {
+                format!("{}.{}", module_name, name)
+            } else {
+                name
+            };
+
             let item = build_item(
                 block,
-                name,
+                qualified,
                 kind,
                 file,
                 end + 2,

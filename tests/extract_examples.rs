@@ -235,28 +235,28 @@ fn cuda_kernels_have_table_tags() {
 #[test]
 fn fortran_vectors_module_variables() {
     let items = extract_file(&fixture("fortran/vectors.f90"));
-    let wp = find_item(&items, "wp");
+    let wp = find_item(&items, "vectors.wp");
     assert!(matches!(wp.kind, DocKind::Variable));
     assert!(!wp.brief.is_empty());
 
-    let max_dim = find_item(&items, "max_dim");
+    let max_dim = find_item(&items, "vectors.max_dim");
     assert!(matches!(max_dim.kind, DocKind::Variable));
 
-    let tol = find_item(&items, "norm_tol");
+    let tol = find_item(&items, "vectors.norm_tol");
     assert!(matches!(tol.kind, DocKind::Variable));
 }
 
 #[test]
 fn fortran_vectors_procedures() {
     let items = extract_file(&fixture("fortran/vectors.f90"));
-    for name in &["dot3", "cross3", "norm3"] {
+    for name in &["vectors.dot3", "vectors.cross3", "vectors.norm3"] {
         let item = find_item(&items, name);
         assert!(
             matches!(item.kind, DocKind::Function),
             "{name} should be Function"
         );
     }
-    let norm = find_item(&items, "normalise");
+    let norm = find_item(&items, "vectors.normalise");
     assert!(matches!(norm.kind, DocKind::Subroutine));
 }
 
@@ -275,7 +275,7 @@ fn fortran_vectors_total_item_count() {
 #[test]
 fn fortran_dot3_has_params_and_return() {
     let items = extract_file(&fixture("fortran/vectors.f90"));
-    let dot = find_item(&items, "dot3");
+    let dot = find_item(&items, "vectors.dot3");
     use docify::extract::TagKind;
     let params: Vec<_> = dot
         .tags
@@ -292,7 +292,7 @@ fn fortran_dot3_has_params_and_return() {
 #[test]
 fn fortran_normalise_has_body() {
     let items = extract_file(&fixture("fortran/vectors.f90"));
-    let norm = find_item(&items, "normalise");
+    let norm = find_item(&items, "vectors.normalise");
     // Second !! line becomes the body.
     assert!(
         !norm.body.is_empty() || !norm.brief.is_empty(),
@@ -1022,7 +1022,7 @@ fn doc_example_mathlib_integrate_keeps_markdown_table_in_body() {
 fn doc_example_linalg_finds_module_variables() {
     let set = extract_dir(&doc_example("libs/linalg/src"));
     let items = &set.items;
-    for name in &["pi", "default_lda", "singular_tol"] {
+    for name in &["linalg.pi", "linalg.default_lda", "linalg.singular_tol"] {
         let item = find_item(items, name);
         assert!(
             matches!(item.kind, DocKind::Variable),
@@ -1036,13 +1036,13 @@ fn doc_example_linalg_finds_module_variables() {
 #[test]
 fn doc_example_linalg_finds_procedures() {
     let set = extract_dir(&doc_example("libs/linalg/src"));
-    let dot = find_item(&set.items, "dot");
+    let dot = find_item(&set.items, "linalg.dot");
     assert!(matches!(dot.kind, DocKind::Function));
 
-    let scale = find_item(&set.items, "scale");
+    let scale = find_item(&set.items, "linalg.scale");
     assert!(matches!(scale.kind, DocKind::Subroutine));
 
-    let solve2 = find_item(&set.items, "solve2");
+    let solve2 = find_item(&set.items, "linalg.solve2");
     assert!(matches!(solve2.kind, DocKind::Function));
 }
 

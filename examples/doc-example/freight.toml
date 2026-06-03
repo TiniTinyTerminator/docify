@@ -11,8 +11,14 @@ name = "doc-example"
 src  = "src/main.cpp"
 
 [dependencies]
-mathlib = { path = "libs/mathlib" }
-stats   = { path = "libs/stats" }
+mathlib   = { path = "libs/mathlib" }
+stats     = { path = "libs/stats" }
+shapes    = { path = "libs/shapes" }
 
 [dev-dependencies]
-linalg  = { path = "libs/linalg" }
+linalg    = { path = "libs/linalg" }
+signals   = { path = "libs/signals",   type = "none" }
+geometry  = { path = "libs/geometry",  type = "none" }
+csvkit    = { path = "libs/csvkit",    type = "none" }
+formatter = { path = "libs/formatter", type = "none" }
+scripting = { path = "libs/scripting", type = "none" }

@@ -51,7 +51,7 @@ pub(super) fn extract_ada(src: &str, file: &Path) -> Vec<DocItem> {
                 qualified,
                 kind,
                 file,
-                i + 1,
+                end + 2,
                 DocLanguage::Ada,
                 sym.to_string(),
             );

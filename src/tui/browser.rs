@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 
 use crossterm::event::{self, Event, KeyCode, KeyModifiers, MouseButton, MouseEventKind};
@@ -28,12 +28,18 @@ struct TreeRow {
     kind: TreeRowKind,
 }
 
+// Stable internal URL for a symbol: "{lang_label}:{qualified_name}".
+// Used as the link target so navigation survives re-renders and tree changes.
+fn symbol_id(item: &DocItem) -> String {
+    format!("{}:{}", item.lang.label(), item.name)
+}
+
 #[derive(Clone)]
 struct DetailLink {
     line: usize,
     start_col: usize,
     end_col: usize,
-    target_idx: usize,
+    target: String, // symbol_id — stable across re-renders
 }
 
 #[derive(Clone)]
@@ -114,6 +120,14 @@ impl TreeNode {
     }
 }
 
+struct PkgDetail {
+    name: String,
+    version: String,
+    description: String,
+    extra: Vec<(String, String)>,
+    readme: Option<String>,
+}
+
 struct App {
     all: Vec<DocItem>,
     visible: Vec<usize>,
@@ -138,6 +152,13 @@ struct App {
     overloads_open: bool,
     focus: FocusPane,
 
+    /// When the selected row is a package node, show README (false) or info (true).
+    show_pkg_info: bool,
+    pkg_cache: Option<(String, PkgDetail)>,
+
+    /// symbol_id(item) → index in self.all — built once, used to resolve link targets.
+    sym_index: HashMap<String, usize>,
+
     list_area: Rect,
     detail_area: Rect,
     detail_inner_area: Rect,
@@ -152,6 +173,13 @@ impl App {
     }
 
     fn new_with_visible(items: Vec<DocItem>, visible: Vec<usize>) -> Self {
+        let sym_index = items
+            .iter()
+            .enumerate()
+            .fold(HashMap::new(), |mut m, (i, item)| {
+                m.entry(symbol_id(item)).or_insert(i);
+                m
+            });
         let mut app = Self {
             all: items,
             visible,
@@ -171,6 +199,9 @@ impl App {
             source_variants_cache: None,
             overloads_open: false,
             focus: FocusPane::Tree,
+            show_pkg_info: false,
+            pkg_cache: None,
+            sym_index,
             list_area: Rect::default(),
             detail_area: Rect::default(),
             detail_inner_area: Rect::default(),
@@ -289,6 +320,35 @@ impl App {
         }
     }
 
+    fn selected_row_depth(&self) -> Option<usize> {
+        let sel = self.list_state.selected()?;
+        Some(self.rows.get(sel)?.depth)
+    }
+
+    fn is_on_package_node(&self) -> bool {
+        self.external_selected_idx.is_none() && self.selected_row_depth() == Some(0)
+    }
+
+    fn selected_pkg_label(&self) -> Option<String> {
+        if !self.is_on_package_node() { return None; }
+        let sel = self.list_state.selected()?;
+        Some(self.rows.get(sel)?.label.clone())
+    }
+
+    fn pkg_detail(&mut self) -> Option<&PkgDetail> {
+        let label = self.selected_pkg_label()?;
+        if self.pkg_cache.as_ref().map(|(k, _)| k.as_str()) != Some(label.as_str()) {
+            let detail = load_pkg_detail(&label, &self.all);
+            self.pkg_cache = Some((label.clone(), detail));
+        }
+        self.pkg_cache.as_ref().map(|(_, d)| d)
+    }
+
+    fn toggle_pkg_tab(&mut self) {
+        self.show_pkg_info = !self.show_pkg_info;
+        self.scroll = 0;
+    }
+
     fn selected_idx(&self) -> Option<usize> {
         if let Some(idx) = self.external_selected_idx {
             return Some(idx);
@@ -345,6 +405,10 @@ impl App {
         self.ensure_selection_visible();
         self.reset_source_state();
         self.overloads_open = false;
+        // Reset package tab when leaving a package node.
+        if self.rows.get(pos).map(|r| r.depth) != Some(0) {
+            self.show_pkg_info = false;
+        }
         self.scroll = if self.show_source {
             self.source_initial_scroll()
         } else {
@@ -560,16 +624,20 @@ impl App {
         }
         let line = self.scroll as usize + (y - self.detail_inner_area.y) as usize;
         let col = (x - self.detail_inner_area.x) as usize;
-        let Some(target_idx) = self
+        let Some(target) = self
             .detail_links
             .iter()
             .find(|link| link.line == line && col >= link.start_col && col < link.end_col)
-            .map(|link| link.target_idx)
+            .map(|link| link.target.clone())
         else {
             return false;
         };
-        self.select_item_idx(target_idx);
-        true
+        if let Some(&idx) = self.sym_index.get(&target) {
+            self.select_item_idx(idx);
+            true
+        } else {
+            false
+        }
     }
 
     fn source_text(&mut self) -> &str {
@@ -775,7 +843,13 @@ fn run_loop(
                     }
                     (KeyCode::Left, _) => app.focus_left(),
                     (KeyCode::Right, _) => app.focus_right(),
-                    (KeyCode::Tab, _) => app.next_focused_tab(),
+                    (KeyCode::Tab, _) => {
+                        if app.is_on_package_node() {
+                            app.toggle_pkg_tab();
+                        } else {
+                            app.next_focused_tab();
+                        }
+                    }
                     (KeyCode::BackTab, _) => app.previous_focused_tab(),
                     (KeyCode::Char('o'), KeyModifiers::NONE) => app.toggle_overloads(),
                     (KeyCode::PageUp, _) => app.page_focused_up(),
@@ -892,7 +966,11 @@ fn render_list(f: &mut Frame, app: &mut App, area: Rect) {
                 } => {
                     let marker = if expanded { "▾" } else { "▸" };
                     let label_style = group_label_style(item_idx.and_then(|idx| app.all.get(idx)));
-                    if let Some(idx) = item_idx {
+                    // Show a kind label only for named group items — not for
+                    // anonymous @file overview items (name = "").
+                    let named_idx = item_idx
+                        .filter(|&idx| !app.all[idx].name.is_empty());
+                    if let Some(idx) = named_idx {
                         let kind = tui_kind_label(&app.all[idx].kind, &app.all[idx].lang);
                         let indent_width = indent.chars().count() + 2;
                         let count = format!("  {}", row.count);
@@ -955,17 +1033,7 @@ fn render_list(f: &mut Frame, app: &mut App, area: Rect) {
         })
         .collect();
 
-    let hidden = app.all.len().saturating_sub(app.visible.len());
-    let title = if hidden == 0 {
-        format!(" {} / {} ", app.matching.len(), app.visible.len())
-    } else {
-        format!(
-            " {} / {}  +{} refs ",
-            app.matching.len(),
-            app.visible.len(),
-            hidden
-        )
-    };
+    let title = format!(" {} / {} ", app.matching.len(), app.visible.len());
     let selected = app
         .list_state
         .selected()
@@ -990,6 +1058,29 @@ fn render_list(f: &mut Frame, app: &mut App, area: Rect) {
 
 fn render_detail(f: &mut Frame, app: &mut App, area: Rect) {
     app.detail_area = area;
+
+    // ── Package node: show README / package info ───────────────────────────────
+    if app.is_on_package_node() {
+        let pkg_name = app.selected_pkg_label().unwrap_or_default();
+        let title = if app.show_pkg_info {
+            format!(" {pkg_name} — info  [Tab: readme] ")
+        } else {
+            format!(" {pkg_name} — README  [Tab: info] ")
+        };
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(panel_border_style(app.focus == FocusPane::Detail))
+            .title(Span::styled(title, Style::default().fg(COLOR_TITLE)));
+        let inner = block.inner(area);
+        app.detail_inner_area = inner;
+        app.detail_links.clear();
+        f.render_widget(block, area);
+        render_package_detail(f, app, inner);
+        return;
+    }
+
+    // ── Normal symbol detail ───────────────────────────────────────────────────
     let show_source = app.show_source;
     let title = if show_source {
         let source_file = app
@@ -1323,6 +1414,7 @@ fn tui_kind_label(kind: &DocKind, lang: &DocLanguage) -> &'static str {
 
         // ── Modules / Namespaces ──────────────────────────────────────────────
         (DocKind::Module, DocLanguage::Rust)       => "mod",
+        (DocKind::Module, DocLanguage::Cpp)        => "namespace",
         (DocKind::Module, DocLanguage::Go | DocLanguage::Java | DocLanguage::Kotlin)
             => "package",
         (DocKind::Module, DocLanguage::TypeScript | DocLanguage::JavaScript | DocLanguage::CSharp)
@@ -1860,7 +1952,7 @@ fn push_overload_dropdown(
                 line: line_no,
                 start_col,
                 end_col: start_col + text.chars().count(),
-                target_idx: idx,
+                target: symbol_id(item),
             });
             let mut spans = vec![
                 Span::styled(prefix, Style::default().fg(COLOR_HINT)),
@@ -2420,7 +2512,7 @@ fn push_code_token_with_links(
             line: line_no,
             start_col,
             end_col: *col,
-            target_idx,
+            target: symbol_id(&all[target_idx]),
         });
     }
     spans.push(Span::styled(token.to_string(), style));
@@ -2674,7 +2766,7 @@ fn push_linkable_text_token(
             line: line_no,
             start_col,
             end_col: start_col + token.chars().count(),
-            target_idx,
+            target: symbol_id(&all[target_idx]),
         });
     }
     spans.push(Span::styled(token.to_string(), style));
@@ -2707,7 +2799,7 @@ fn push_reference_token(
             line: line_no,
             start_col,
             end_col: start_col + token.chars().count(),
-            target_idx,
+            target: symbol_id(&all[target_idx]),
         });
     }
     spans.push(Span::styled(token.to_string(), style));
@@ -2816,25 +2908,35 @@ fn declaration_line_idx(item: &DocItem) -> usize {
         return start;
     };
 
-    if line.starts_with("///") || line.starts_with("//!") {
+    // `///`, `//!`, or plain `//` (Go, C++)
+    if line.starts_with("//") {
         let mut idx = start;
-        while idx < lines.len()
-            && lines[idx]
-                .trim_start()
-                .starts_with(|ch: char| ch == '/' || ch == '!')
-        {
+        while idx < lines.len() && lines[idx].trim_start().starts_with("//") {
             idx += 1;
         }
         return next_nonblank_line(&lines, idx).unwrap_or(start);
     }
 
-    if line.starts_with("/**") || line.starts_with("/*!") || line.starts_with("/*") {
+    // `/**`, `/*!`, `/*`, or `/++` (D)
+    if line.starts_with("/**") || line.starts_with("/*!") || line.starts_with("/*")
+        || line.starts_with("/++")
+    {
+        let end_pat = if line.starts_with("/++") { "+/" } else { "*/" };
         let mut idx = start;
         while idx < lines.len() {
-            if lines[idx].contains("*/") {
+            if lines[idx].contains(end_pat) {
                 idx += 1;
                 break;
             }
+            idx += 1;
+        }
+        return next_nonblank_line(&lines, idx).unwrap_or(start);
+    }
+
+    // `--` (Ada, Haskell, SQL)
+    if line.starts_with("--") {
+        let mut idx = start;
+        while idx < lines.len() && lines[idx].trim_start().starts_with("--") {
             idx += 1;
         }
         return next_nonblank_line(&lines, idx).unwrap_or(start);
@@ -2859,6 +2961,291 @@ fn source_cache_key(item: &DocItem) -> String {
 
 fn extract_source_text(item: &DocItem) -> String {
     std::fs::read_to_string(&item.file).unwrap_or_default()
+}
+
+// ── Package detail ────────────────────────────────────────────────────────────
+
+fn find_package_root(item: &DocItem) -> Option<std::path::PathBuf> {
+    let start = if item.file.is_file() { item.file.parent()? } else { &*item.file };
+    let manifests = [
+        "Cargo.toml", "freight.toml", "package.json",
+        "pyproject.toml", "go.mod", "composer.json",
+    ];
+    for ancestor in start.ancestors() {
+        if manifests.iter().any(|m| ancestor.join(m).exists()) {
+            return Some(ancestor.to_path_buf());
+        }
+    }
+    None
+}
+
+fn read_readme(root: &std::path::Path) -> Option<String> {
+    for name in &["README.md", "Readme.md", "readme.md", "README.MD",
+                  "README.rst", "README.txt", "README"] {
+        if let Ok(text) = std::fs::read_to_string(root.join(name)) {
+            return Some(text);
+        }
+    }
+    None
+}
+
+fn read_manifest_description(root: &std::path::Path) -> (String, Vec<(String, String)>) {
+    let mut desc = String::new();
+    let mut extra: Vec<(String, String)> = Vec::new();
+
+    // Try TOML manifests (freight.toml, Cargo.toml)
+    for name in &["freight.toml", "Cargo.toml"] {
+        let Ok(text) = std::fs::read_to_string(root.join(name)) else { continue };
+        let Ok(v) = text.parse::<toml::Value>() else { continue };
+        if let Some(pkg) = v.get("package") {
+            if let Some(d) = pkg.get("description").and_then(|v| v.as_str()) {
+                desc = d.to_owned();
+            }
+            if let Some(hp) = pkg.get("homepage").and_then(|v| v.as_str()) {
+                extra.push(("Homepage".into(), hp.to_owned()));
+            }
+            if let Some(rep) = pkg.get("repository").and_then(|v| v.as_str()) {
+                extra.push(("Repository".into(), rep.to_owned()));
+            }
+            if let Some(lic) = pkg.get("license").and_then(|v| v.as_str()) {
+                extra.push(("License".into(), lic.to_owned()));
+            }
+        }
+        // Language / std info (freight.toml)
+        if let Some(lang_table) = v.get("language").and_then(|l| l.as_table()) {
+            for (lang, cfg) in lang_table {
+                let std_info = cfg.get("std")
+                    .and_then(|s| s.as_str())
+                    .map(|s| format!("{lang} ({s})"))
+                    .unwrap_or_else(|| lang.clone());
+                extra.push(("Language".into(), std_info));
+            }
+        }
+        break;
+    }
+
+    // Try package.json
+    if desc.is_empty() {
+        if let Ok(text) = std::fs::read_to_string(root.join("package.json")) {
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
+                if let Some(d) = v.get("description").and_then(|v| v.as_str()) {
+                    desc = d.to_owned();
+                }
+            }
+        }
+    }
+
+    // Try pyproject.toml
+    if desc.is_empty() {
+        if let Ok(text) = std::fs::read_to_string(root.join("pyproject.toml")) {
+            if let Ok(v) = text.parse::<toml::Value>() {
+                if let Some(d) = v.get("project")
+                    .and_then(|p| p.get("description"))
+                    .and_then(|v| v.as_str())
+                {
+                    desc = d.to_owned();
+                }
+            }
+        }
+    }
+
+    (desc, extra)
+}
+
+fn load_pkg_detail(pkg_label: &str, all: &[DocItem]) -> PkgDetail {
+    let item = all.iter().find(|i| package_label(i).as_deref() == Some(pkg_label));
+    let root = item.and_then(find_package_root);
+
+    let (name, version) = item
+        .and_then(|i| i.meta.package.as_ref())
+        .map(|p| (p.name.clone(), p.version.clone()))
+        .unwrap_or_else(|| (pkg_label.to_owned(), String::new()));
+
+    let (description, extra) = root.as_deref()
+        .map(read_manifest_description)
+        .unwrap_or_default();
+
+    let readme = root.as_deref().and_then(read_readme);
+
+    PkgDetail { name, version, description, extra, readme }
+}
+
+fn render_package_detail(
+    f: &mut ratatui::Frame,
+    app: &mut App,
+    inner: ratatui::layout::Rect,
+) {
+    let show_info = app.show_pkg_info;
+    let width = inner.width as usize;
+
+    // Ensure cache is populated, then borrow immutably.
+    app.pkg_detail();
+    let Some((_, detail)) = app.pkg_cache.as_ref() else {
+        let p = ratatui::widgets::Paragraph::new("No package information available.")
+            .style(ratatui::style::Style::default().fg(COLOR_CONTENT));
+        f.render_widget(p, inner);
+        return;
+    };
+
+    let lines: Vec<ratatui::text::Line<'static>> = if show_info {
+        pkg_info_lines(detail)
+    } else {
+        pkg_readme_lines(detail, width)
+    };
+
+    let max_scroll = lines.len().saturating_sub(inner.height as usize);
+    app.scroll = app.scroll.min(max_scroll as u16);
+
+    f.render_widget(
+        ratatui::widgets::Paragraph::new(lines)
+            .wrap(ratatui::widgets::Wrap { trim: false })
+            .scroll((app.scroll, 0)),
+        inner,
+    );
+}
+
+fn pkg_info_lines(detail: &PkgDetail) -> Vec<ratatui::text::Line<'static>> {
+    use ratatui::{style::{Color, Modifier, Style}, text::{Line, Span}};
+    let mut lines: Vec<Line<'static>> = Vec::new();
+
+    let title_style = Style::default().fg(COLOR_SECTION).add_modifier(Modifier::BOLD);
+    let key_style = Style::default().fg(COLOR_HINT);
+    let val_style = Style::default().fg(COLOR_CONTENT);
+
+    lines.push(Line::from(vec![
+        Span::styled(detail.name.clone(), Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+        if detail.version.is_empty() { Span::raw("") }
+        else { Span::styled(format!("  {}", detail.version), Style::default().fg(COLOR_HINT)) },
+    ]));
+    lines.push(Line::raw(""));
+
+    if !detail.description.is_empty() {
+        lines.push(Line::styled(detail.description.clone(), val_style));
+        lines.push(Line::raw(""));
+    }
+
+    if !detail.extra.is_empty() {
+        lines.push(Line::styled("Details", title_style));
+        for (k, v) in &detail.extra {
+            lines.push(Line::from(vec![
+                Span::styled(format!("  {k}: "), key_style),
+                Span::styled(v.clone(), val_style),
+            ]));
+        }
+        lines.push(Line::raw(""));
+    }
+
+    if detail.readme.is_none() {
+        lines.push(Line::styled("No README found.", Style::default().fg(COLOR_HINT)));
+    } else {
+        lines.push(Line::styled("README available — press Tab to view.", Style::default().fg(COLOR_HINT)));
+    }
+
+    lines
+}
+
+// ── Custom tui_markdown stylesheet ────────────────────────────────────────────
+
+#[derive(Clone, Copy, Debug, Default)]
+struct DocifyMarkdownStyle;
+
+impl tui_markdown::StyleSheet for DocifyMarkdownStyle {
+    fn heading(&self, level: u8) -> ratatui::style::Style {
+        use ratatui::style::{Color, Modifier, Style};
+        match level {
+            1 => Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+            2 => Style::default()
+                    .fg(Color::Rgb(220, 200, 150))
+                    .add_modifier(Modifier::BOLD),
+            3 => Style::default()
+                    .fg(Color::Rgb(180, 180, 255))
+                    .add_modifier(Modifier::BOLD),
+            _ => Style::default()
+                    .fg(Color::Rgb(180, 180, 255))
+                    .add_modifier(Modifier::ITALIC),
+        }
+    }
+    fn code(&self) -> ratatui::style::Style {
+        ratatui::style::Style::default().fg(ratatui::style::Color::Rgb(200, 220, 180))
+    }
+    fn link(&self) -> ratatui::style::Style {
+        ratatui::style::Style::default()
+            .fg(ratatui::style::Color::LightBlue)
+            .add_modifier(ratatui::style::Modifier::UNDERLINED)
+    }
+    fn blockquote(&self) -> ratatui::style::Style {
+        ratatui::style::Style::default().fg(ratatui::style::Color::Rgb(180, 180, 100))
+    }
+    fn heading_meta(&self) -> ratatui::style::Style {
+        ratatui::style::Style::default().add_modifier(ratatui::style::Modifier::DIM)
+    }
+    fn metadata_block(&self) -> ratatui::style::Style {
+        ratatui::style::Style::default().fg(ratatui::style::Color::Rgb(150, 150, 150))
+    }
+}
+
+fn pkg_readme_lines(detail: &PkgDetail, width: usize) -> Vec<ratatui::text::Line<'static>> {
+    use ratatui::{style::Style, text::Line};
+
+    let text = match &detail.readme {
+        Some(t) => t.as_str(),
+        None => {
+            if detail.description.is_empty() {
+                return vec![Line::styled("No README found.", Style::default().fg(COLOR_HINT))];
+            }
+            return vec![Line::styled(detail.description.clone(), Style::default().fg(COLOR_CONTENT))];
+        }
+    };
+
+    // Render LaTeX math ($...$ and $$...$$) to Unicode before passing to tui_markdown.
+    let processed;
+    let text = if cfg!(feature = "rich-math") {
+        processed = doc_text(text);
+        processed.as_str()
+    } else {
+        text
+    };
+
+    // Hybrid rendering:
+    //   Markdown tables     → box-drawn table widget
+    //   everything else     → tui_markdown (headings, bold, fenced code with syntect, …)
+    let raw: Vec<&str> = text.lines().collect();
+    let options = tui_markdown::Options::new(DocifyMarkdownStyle);
+    let mut out: Vec<Line<'static>> = Vec::new();
+    let mut i = 0;
+
+    while i < raw.len() {
+        // Markdown table
+        if let Some((table, consumed)) = parse_markdown_table(&raw, i) {
+            push_markdown_table(&mut out, &table, width.max(40));
+            i += consumed;
+            continue;
+        }
+
+        // Prose + code blocks: collect until the next table and let tui_markdown handle it.
+        let start = i;
+        while i < raw.len() && parse_markdown_table(&raw, i).is_none() {
+            i += 1;
+        }
+        let block = raw[start..i].join("\n");
+        out.extend(
+            tui_markdown::from_str_with_options(&block, &options)
+                .lines
+                .into_iter()
+                .map(|l| {
+                    Line::from(
+                        l.spans
+                            .into_iter()
+                            .map(|s| ratatui::text::Span::styled(s.content.into_owned(), s.style))
+                            .collect::<Vec<_>>(),
+                    )
+                }),
+        );
+    }
+
+    out
 }
 
 fn source_file_title(item: &DocItem) -> String {
@@ -3178,6 +3565,22 @@ fn push_tree_rows(
     expanded: &HashSet<String>,
     out: &mut Vec<TreeRow>,
 ) {
+    let has_expandable = !node.children.is_empty() || !node.items.is_empty();
+
+    // Nodes with nothing to expand (e.g. a struct with no documented members)
+    // are shown as plain items — no dropdown arrow.
+    if !has_expandable {
+        if let Some(idx) = node.item_idx {
+            out.push(TreeRow {
+                depth,
+                label: node.label.clone(),
+                count: 1,
+                kind: TreeRowKind::Item(idx),
+            });
+        }
+        return;
+    }
+
     let is_expanded = auto_expand || expanded.contains(&node.key);
     out.push(TreeRow {
         depth,
@@ -3328,13 +3731,15 @@ fn language_group_label(lang: &DocLanguage) -> &'static str {
 
 fn item_group_parts(item: &DocItem) -> Vec<String> {
     match item.lang {
-        DocLanguage::C | DocLanguage::Cpp => {
-            let mut parts = vec![item
+        DocLanguage::C => {
+            // C: group by file (no namespaces)
+            let filename = item
                 .file
                 .file_name()
                 .and_then(|name| name.to_str())
                 .map(str::to_owned)
-                .unwrap_or_else(|| item.file.display().to_string())];
+                .unwrap_or_else(|| item.file.display().to_string());
+            let mut parts = vec![filename];
             if matches!(
                 item.kind,
                 DocKind::Class | DocKind::Struct | DocKind::Interface | DocKind::Module
@@ -3345,6 +3750,41 @@ fn item_group_parts(item: &DocItem) -> Vec<String> {
                 parts.extend(split_scope_prefix(&item.name, "::"));
             }
             parts
+        }
+        DocLanguage::Cpp => {
+            // C++: Doxygen-style — namespace/module → class hierarchy, no file prefix.
+            // @file items (name = "") attach directly to the language/package node.
+            if matches!(item.kind, DocKind::Module) && item.name.is_empty() {
+                return vec![];
+            }
+
+            // Items from a C++20 module partition carry a "cxx-module:lm.vec" attr.
+            // Route them under the partition node rather than the flat namespace.
+            let partition = item.meta.attrs.iter()
+                .find_map(|a| a.strip_prefix("cxx-module:").map(str::to_owned));
+
+            if matches!(item.kind, DocKind::Module) && !item.name.is_empty() {
+                return split_scope(&item.name);
+            }
+            if is_type_group_doc_item(item) {
+                if let Some(ref part) = partition {
+                    // Class/struct lives in a partition: group under partition.
+                    let mut p = split_scope(part);
+                    p.push(simple_name(&item.name).to_string());
+                    return p;
+                }
+                return split_scope(&item.name);
+            }
+            if let Some(ref part) = partition {
+                // Free functions / members in a partition: group under partition node.
+                return split_scope(part);
+            }
+            let parts = split_scope_prefix(&item.name, "::");
+            if parts.is_empty() {
+                vec!["(global)".to_string()]
+            } else {
+                parts
+            }
         }
         DocLanguage::Rust => {
             if is_type_group_doc_item(item) {
@@ -3361,6 +3801,9 @@ fn item_group_parts(item: &DocItem) -> Vec<String> {
             }
         }
         DocLanguage::Ada | DocLanguage::D | DocLanguage::Go | DocLanguage::Fortran => {
+            if matches!(item.kind, DocKind::Module) && !item.name.is_empty() {
+                return split_scope(&item.name);
+            }
             if is_type_group_doc_item(item) {
                 return split_scope(&item.name);
             }
@@ -3371,6 +3814,27 @@ fn item_group_parts(item: &DocItem) -> Vec<String> {
                 parts
             }
         }
+        DocLanguage::Ruby => {
+            if matches!(item.kind, DocKind::Module) && !item.name.is_empty() {
+                return split_scope(&item.name);
+            }
+            if is_type_group_doc_item(item) {
+                return split_scope(&item.name);
+            }
+            let parent = item
+                .meta
+                .parent
+                .as_deref()
+                .filter(|parent| !parent.is_empty())
+                .map(str::to_owned)
+                .or_else(|| item.name.rsplit_once('#').map(|(m, _)| m.to_string()))
+                .or_else(|| item.name.rsplit_once('.').map(|(m, _)| m.to_string()))
+                .or_else(|| item.name.rsplit_once("::").map(|(m, _)| m.to_string()));
+            match parent {
+                Some(p) => split_scope(&p),
+                None => vec!["(root)".to_string()],
+            }
+        }
         DocLanguage::Java
         | DocLanguage::Kotlin
         | DocLanguage::Swift
@@ -3379,11 +3843,13 @@ fn item_group_parts(item: &DocItem) -> Vec<String> {
         | DocLanguage::JavaScript
         | DocLanguage::CSharp
         | DocLanguage::Php
-        | DocLanguage::Ruby
         | DocLanguage::Lua
         | DocLanguage::R
         | DocLanguage::Haskell
         | DocLanguage::Python => {
+            if matches!(item.kind, DocKind::Module) && !item.name.is_empty() {
+                return split_scope(&item.name);
+            }
             if is_type_group_doc_item(item) {
                 return split_scope(&item.name);
             }
@@ -3664,7 +4130,7 @@ mod tests {
 
         assert_eq!(text, "returns std::vector values");
         assert_eq!(links.len(), 1);
-        assert_eq!(links[0].target_idx, 0);
+        assert_eq!(links[0].target, "C++:std::vector");
     }
 
     #[test]
@@ -3692,7 +4158,7 @@ mod tests {
 
         assert_eq!(text, "stats::mean calls stats::variance");
         assert_eq!(links.len(), 1);
-        assert_eq!(links[0].target_idx, 2);
+        assert_eq!(links[0].target, "C++:stats::variance");
     }
 
     #[test]

@@ -19,7 +19,7 @@ required-features = ["tui"]
 
 [features]
 default      = ["tui"]
-tui          = ["dep:ratatui", "dep:crossterm"]
+tui          = ["dep:ratatui", "dep:crossterm", "dep:tui-markdown", "tui-markdown/highlight-code"]
 clang        = ["dep:clang"]
 rich-math    = []
 
@@ -34,4 +34,5 @@ toml           = "0.8"
 anyhow         = "1"
 ratatui        = { version = "0.30", optional = true }
 crossterm      = { version = "0.29", optional = true }
+tui-markdown   = { version = "0.3", optional = true, default-features = false }
 clang          = { version = "2", optional = true, features = ["runtime"] }

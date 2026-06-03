@@ -48,7 +48,7 @@ pub(super) fn extract_d(src: &str, file: &Path) -> Vec<DocItem> {
                 qualified,
                 kind,
                 file,
-                i + 1,
+                end + 2,
                 DocLanguage::D,
                 sym.to_string(),
             );
@@ -69,7 +69,7 @@ pub(super) fn extract_d(src: &str, file: &Path) -> Vec<DocItem> {
                 qualified,
                 kind,
                 file,
-                i + 1,
+                end + 2,
                 DocLanguage::D,
                 sym.to_string(),
             );
@@ -90,7 +90,7 @@ pub(super) fn extract_d(src: &str, file: &Path) -> Vec<DocItem> {
                 qualified,
                 kind,
                 file,
-                i + 1,
+                end + 2,
                 DocLanguage::D,
                 sym.to_string(),
             );

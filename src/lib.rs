@@ -3,6 +3,8 @@ pub mod cache;
 pub mod extract;
 #[cfg(feature = "clang")]
 pub mod extract_clang;
+#[cfg(feature = "clang-bridge")]
+pub mod extract_bridge;
 pub mod markdown;
 pub mod project;
 pub mod render_md;

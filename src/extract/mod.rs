@@ -541,7 +541,6 @@ pub trait DocExtractor: Send + Sync {
 
 // ── Language detection (crate-internal) ──────────────────────────────────────
 
-#[cfg(feature = "clang")]
 pub(crate) fn lang_from_ext(ext: &str) -> DocLanguage {
     match ext {
         "c" | "h" => DocLanguage::C,
@@ -646,13 +645,21 @@ impl Default for ExtractorRegistry {
 // ── Entry points ──────────────────────────────────────────────────────────────
 
 pub fn extract_file(path: &Path) -> Vec<DocItem> {
-    #[cfg(feature = "clang")]
-    {
-        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-        if matches!(lang_from_ext(ext), DocLanguage::C | DocLanguage::Cpp) {
-            return crate::extract_clang::extract_file_clang(path);
-        }
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+    let is_c_family = matches!(lang_from_ext(ext), DocLanguage::C | DocLanguage::Cpp);
+
+    // clang-bridge (libclang-cpp) takes priority: full AST, USRs, accurate signatures.
+    #[cfg(feature = "clang-bridge")]
+    if is_c_family {
+        return crate::extract_bridge::extract_file_bridge(path, &[]);
     }
+
+    // Legacy libclang (C API) fallback.
+    #[cfg(feature = "clang")]
+    if is_c_family {
+        return crate::extract_clang::extract_file_clang(path);
+    }
+
     ExtractorRegistry::default().extract_file(path)
 }
 
